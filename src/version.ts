@@ -1,4 +1,4 @@
-export const VERSION = '1.3.0'
+export const VERSION = '1.3.1'
 
 export interface Release {
   version: string
@@ -7,6 +7,14 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.3.1',
+    date: '2026-06-14',
+    notes: [
+      'Title format: {name} - {set} #{number} - {foil}{condition_abbr} MTG (e.g. "Ninja Pizza - TMNT Commander #32 - Foil NM MTG")',
+      'New {condition_abbr} token: NM / LP / MP / HP / DMG',
+    ],
+  },
   {
     version: '1.3.0',
     date: '2026-06-14',

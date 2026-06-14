@@ -27,6 +27,18 @@ const CONDITION_LABEL: Record<string, string> = {
   'Damaged':                'Damaged',
 }
 
+const CONDITION_ABBR: Record<string, string> = {
+  'Near Mint':              'NM',
+  'Near Mint Foil':         'NM',
+  'Lightly Played':         'LP',
+  'Lightly Played Foil':    'LP',
+  'Moderately Played':      'MP',
+  'Moderately Played Foil': 'MP',
+  'Heavily Played':         'HP',
+  'Heavily Played Foil':    'HP',
+  'Damaged':                'DMG',
+}
+
 function isFoil(condition: string): boolean {
   return condition.toLowerCase().includes('foil')
 }
@@ -39,7 +51,12 @@ function conditionLabel(condition: string): string {
   return CONDITION_LABEL[condition] ?? condition
 }
 
-// Resolve title template tokens. {foil} outputs "Foil " for foil cards, "" otherwise.
+function conditionAbbr(condition: string): string {
+  return CONDITION_ABBR[condition] ?? 'NM'
+}
+
+// Resolve title template tokens.
+// {foil} → "Foil " or ""; {condition_abbr} → NM/LP/MP/HP/DMG
 function resolveTitle(template: string, card: TcgCard): string {
   const foilTag = isFoil(card.condition) ? 'Foil ' : ''
   return template
@@ -47,6 +64,7 @@ function resolveTitle(template: string, card: TcgCard): string {
     .replace('{set}', card.setName)
     .replace('{number}', card.number)
     .replace('{condition}', card.condition)
+    .replace('{condition_abbr}', conditionAbbr(card.condition))
     .replace('{rarity}', card.rarity)
     .replace('{foil}', foilTag)
     .slice(0, 80)

@@ -52,7 +52,7 @@ const DEFAULT_STATE: AppState = {
     ],
   },
   ebay: {
-    titleTemplate: '{name} {set} #{number} {foil}MTG Magic',
+    titleTemplate: '{name} - {set} #{number} - {foil}{condition_abbr} MTG',
     conditionDescription: 'Shipped in a penny sleeve and card saver.',
     categoryId: '2536',
     listingDuration: 'GTC',
@@ -98,7 +98,7 @@ export default function App() {
               className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
               title="View changelog"
             >
-              v1.3.0
+              v1.3.1
             </button>
           </div>
           <div className="flex items-center gap-4">
