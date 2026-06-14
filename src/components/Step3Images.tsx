@@ -12,43 +12,6 @@ interface UploadedImage {
   hostedId?: string           // server ID for the uploaded image
 }
 
-// ─── pHash helpers ────────────────────────────────────────────────────────────
-
-async function computeDHash(url: string): Promise<bigint | null> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas')
-        canvas.width = 9; canvas.height = 8
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return resolve(null)
-        ctx.drawImage(img, 0, 0, 9, 8)
-        const { data } = ctx.getImageData(0, 0, 9, 8)
-        let hash = 0n
-        for (let y = 0; y < 8; y++) {
-          for (let x = 0; x < 8; x++) {
-            const i = (y * 9 + x) * 4, j = i + 4
-            const g1 = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-            const g2 = data[j] * 0.299 + data[j + 1] * 0.587 + data[j + 2] * 0.114
-            hash = (hash << 1n) | (g1 > g2 ? 1n : 0n)
-          }
-        }
-        resolve(hash)
-      } catch { resolve(null) }
-    }
-    img.onerror = () => resolve(null)
-    img.src = url
-  })
-}
-
-function hammingDist(a: bigint, b: bigint): number {
-  let x = a ^ b, c = 0
-  while (x > 0n) { c += Number(x & 1n); x >>= 1n }
-  return c
-}
-
 // ─── filename matching ────────────────────────────────────────────────────────
 
 function normalizeBase(s: string): string {
@@ -113,8 +76,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [scopeSet, setScopeSet]     = useState('all')
   const [dragging, setDragging]     = useState(false)
   const [matching, setMatching]     = useState(false)
-  const [matchProgress, setMatchProgress] = useState(0)
-  const [matchStats, setMatchStats] = useState<{ byFilename: number; byPhash: number } | null>(null)
+  const [matchStats, setMatchStats] = useState<{ byFilename: number } | null>(null)
   const [uploading, setUploading]   = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -167,15 +129,14 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   }
 
   async function handleAutoMatch() {
-    setMatching(true); setMatchProgress(0); setMatchStats(null)
+    setMatching(true); setMatchStats(null)
     const target = scopedCards
-    let byFilename = 0, byPhash = 0
+    let byFilename = 0
 
     const work = images.map(i => ({ ...i }))
     const usedFront = new Set(work.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
     const usedBack  = new Set(work.filter(i => i.assignedTo && i.side === 'back').map(i => i.assignedTo!))
 
-    // Pass 1: filename
     for (const img of work) {
       if (img.assignedTo) continue
       const usedSet = img.side === 'front' ? usedFront : usedBack
@@ -190,44 +151,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         byFilename++
       }
     }
-    setImages([...work]); setMatchProgress(0.35)
 
-    // Pass 2: pHash against TCGPlayer reference images
-    const unmatched = work.filter(i => !i.assignedTo)
-    if (unmatched.length > 0) {
-      const imgHashes = new Map<string, bigint | null>()
-      for (const img of unmatched) {
-        imgHashes.set(img.id, await computeDHash(img.objectUrl))
-      }
-      setMatchProgress(0.55)
-
-      const candidates = target.filter(c => c.photoUrl && !usedFront.has(c.tcgplayerId))
-      const refHashes = new Map<string, bigint | null>()
-      for (let i = 0; i < candidates.length; i++) {
-        refHashes.set(candidates[i].tcgplayerId, await computeDHash(candidates[i].photoUrl))
-        setMatchProgress(0.55 + (i / Math.max(candidates.length, 1)) * 0.4)
-      }
-
-      for (const img of unmatched) {
-        const imgHash = imgHashes.get(img.id)
-        if (!imgHash) continue
-        const usedSet = img.side === 'front' ? usedFront : usedBack
-        let best: { tcgId: string; dist: number } | null = null
-        for (const [tcgId, refHash] of refHashes) {
-          if (usedSet.has(tcgId) || !refHash) continue
-          const dist = hammingDist(imgHash, refHash)
-          if (dist < 12 && (!best || dist < best.dist)) best = { tcgId, dist }
-        }
-        if (best) {
-          img.assignedTo = best.tcgId
-          usedSet.add(best.tcgId)
-          byPhash++
-        }
-      }
-      setImages([...work])
-    }
-
-    setMatchProgress(1); setMatchStats({ byFilename, byPhash }); setMatching(false)
+    setImages([...work]); setMatchStats({ byFilename }); setMatching(false)
   }
 
   async function handleUploadToServer() {
@@ -361,7 +286,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
               className="text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-4 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-2"
             >
               {matching
-                ? <><span className="inline-block animate-spin">⟳</span> Matching… {Math.round(matchProgress * 100)}%</>
+                ? <><span className="inline-block animate-spin">⟳</span> Matching…</>
                 : '⚡ Run auto-match'}
             </button>
           </div>
@@ -370,9 +295,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
       {matchStats && (
         <div className="text-xs text-gray-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-          Auto-match found <strong>{matchStats.byFilename + matchStats.byPhash}</strong> assignments —{' '}
-          {matchStats.byFilename} by filename, {matchStats.byPhash} by pHash.
-          Correct any wrong ones below (hover a slot thumbnail to unassign).
+          Auto-match assigned <strong>{matchStats.byFilename}</strong> image{matchStats.byFilename !== 1 ? 's' : ''} by filename.
+          Drag remaining unmatched photos to a card row, or rename files to card numbers (e.g. <code className="bg-blue-100 px-0.5 rounded">058.jpg</code>) before uploading.
         </div>
       )}
       {uploadError && (
