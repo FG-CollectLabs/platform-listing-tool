@@ -72,6 +72,13 @@ function setSku(cards: TcgCard[], tcgplayerId: string, sku: string): TcgCard[] {
   return cards.map(c => c.tcgplayerId === tcgplayerId ? { ...c, sku: sku || undefined } : c)
 }
 
+function applyDefaultSku(cards: TcgCard[], matchedIds: string[], defaultSku: string): TcgCard[] {
+  if (!defaultSku) return cards
+  return cards.map(c =>
+    matchedIds.includes(c.tcgplayerId) && !c.sku ? { ...c, sku: defaultSku } : c
+  )
+}
+
 export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [images, setImages]         = useState<UploadedImage[]>([])
@@ -84,6 +91,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [uploading, setUploading]   = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [defaultSku, setDefaultSku] = useState('')
 
   const setNames = Array.from(new Set(cards.map(c => c.setName))).sort()
   const scopedCards = scopeSet === 'all' ? cards : cards.filter(c => c.setName === scopeSet)
@@ -103,7 +111,15 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         side: isBackFilename(f.name) ? 'back' : 'front' as 'front' | 'back',
         assignedTo: null,
       }))
-    setImages(prev => quickFilenameMatch([...prev, ...newImgs], scopedCards))
+    const prevAssigned = new Set(images.filter(i => i.assignedTo).map(i => i.assignedTo!))
+    const matched = quickFilenameMatch([...images, ...newImgs], scopedCards)
+    setImages(matched)
+    if (defaultSku) {
+      const newlyMatchedIds = matched
+        .filter(i => i.assignedTo && !prevAssigned.has(i.assignedTo))
+        .map(i => i.assignedTo!)
+      if (newlyMatchedIds.length > 0) onCards(applyDefaultSku(cards, newlyMatchedIds, defaultSku))
+    }
   }
 
   function loadFiles(files: FileList) {
@@ -168,6 +184,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       img.id === imgId ? { ...img, assignedTo: tcgplayerId, side } : img
     ))
     setSelectedId(null)
+    if (defaultSku) {
+      const card = cards.find(c => c.tcgplayerId === tcgplayerId)
+      if (card && !card.sku) onCards(setSku(cards, tcgplayerId, defaultSku))
+    }
   }
 
   function unassignSlot(tcgplayerId: string, side: 'front' | 'back') {
@@ -181,6 +201,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     const target = scopedCards
     let byFilename = 0
 
+    const prevAssigned = new Set(images.filter(i => i.assignedTo).map(i => i.assignedTo!))
     const work = images.map(i => ({ ...i }))
     const usedFront = new Set(work.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
     const usedBack  = new Set(work.filter(i => i.assignedTo && i.side === 'back').map(i => i.assignedTo!))
@@ -201,6 +222,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     }
 
     setImages([...work]); setMatchStats({ byFilename }); setMatching(false)
+    if (defaultSku) {
+      const newlyMatchedIds = work
+        .filter(i => i.assignedTo && !prevAssigned.has(i.assignedTo))
+        .map(i => i.assignedTo!)
+      if (newlyMatchedIds.length > 0) onCards(applyDefaultSku(cards, newlyMatchedIds, defaultSku))
+    }
   }
 
   async function handleUploadToServer() {
@@ -254,6 +281,21 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
           to mark front or back face, then click a card row to assign it.
           Suffix files with <code className="text-xs bg-gray-100 px-1 rounded">-back</code> to auto-mark back faces on upload.
         </p>
+      </div>
+
+      {/* Batch SKU */}
+      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+        <div className="flex-shrink-0">
+          <p className="text-xs font-semibold text-gray-700">Default SKU / location</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Stamped on every card when matched — override per card below</p>
+        </div>
+        <input
+          type="text"
+          value={defaultSku}
+          onChange={e => setDefaultSku(e.target.value)}
+          placeholder="e.g. Binder A · Row 3"
+          className="ml-auto w-56 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 placeholder-gray-300"
+        />
       </div>
 
       {/* Drop zone */}
