@@ -18,6 +18,7 @@ export interface TcgCard {
   imageFileName?: string
   imageObjectUrlBack?: string
   imageFileNameBack?: string
+  sku?: string
 }
 
 export interface PricingTier {

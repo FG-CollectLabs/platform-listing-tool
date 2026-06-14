@@ -6,6 +6,7 @@ interface Props {
   cards: TcgCard[]
   pricing: PricingRules
   ebay: EbaySettings
+  onCards: (cards: TcgCard[]) => void
   onBack: () => void
   onReset: () => void
 }
@@ -19,7 +20,10 @@ function PctBadge({ pct, warn = 0.80 }: { pct: number; warn?: number }) {
   )
 }
 
-export default function Step4Export({ cards, pricing, ebay, onBack, onReset }: Props) {
+export default function Step4Export({ cards, pricing, ebay, onCards, onBack, onReset }: Props) {
+  function setSku(tcgplayerId: string, sku: string) {
+    onCards(cards.map(c => c.tcgplayerId === tcgplayerId ? { ...c, sku: sku || undefined } : c))
+  }
   const listable = cards.filter((c) => c.totalQuantity > 0)
   const withImages  = listable.filter((c) => c.imageObjectUrl).length
   const withBackImg = listable.filter((c) => c.imageObjectUrlBack).length
@@ -103,11 +107,10 @@ export default function Step4Export({ cards, pricing, ebay, onBack, onReset }: P
 
       {/* Image note */}
       {withImages > 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-          <strong>Images:</strong> PicURL contains your image filenames
-          ({withImages} front{withBackImg > 0 ? `, ${withBackImg} back` : ''}).
-          eBay File Exchange requires hosted URLs — upload to an image host and replace filenames with
-          full URLs before importing. Multiple images per listing are pipe-separated (<code>front.jpg|back.jpg</code>).
+        <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
+          <strong>Images:</strong> {withImages} front{withBackImg > 0 ? ` + ${withBackImg} back` : ''} images included.
+          eBay will fetch them from <code>listings.futuregadgetlabs.com</code> — make sure all assigned images were uploaded to the server in Step 3.
+          Front + back are pipe-separated in the <em>Item photo URL</em> column.
         </div>
       )}
 
@@ -121,6 +124,7 @@ export default function Step4Export({ cards, pricing, ebay, onBack, onReset }: P
             <thead className="bg-gray-50 sticky top-0 border-b border-gray-200">
               <tr>
                 <th className="text-left px-4 py-2 font-medium text-gray-500">Card</th>
+                <th className="text-left px-2 py-2 font-medium text-gray-500">SKU</th>
                 <th className="text-right px-2 py-2 font-medium text-gray-500">Market</th>
                 <th className="text-center px-2 py-2 font-medium text-gray-500">Tier</th>
                 <th className="text-right px-2 py-2 font-medium text-gray-500">Item</th>
@@ -138,7 +142,16 @@ export default function Step4Export({ cards, pricing, ebay, onBack, onReset }: P
                 const pct   = computeNetPct(c, pricing)
                 return (
                   <tr key={c.tcgplayerId} className="hover:bg-gray-50">
-                    <td className="px-4 py-1.5 font-medium text-gray-800 max-w-48 truncate">{c.productName}</td>
+                    <td className="px-4 py-1.5 font-medium text-gray-800 max-w-36 truncate">{c.productName}</td>
+                    <td className="px-2 py-1">
+                      <input
+                        type="text"
+                        value={c.sku ?? ''}
+                        onChange={e => setSku(c.tcgplayerId, e.target.value)}
+                        placeholder="—"
+                        className="w-24 text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 text-gray-700 placeholder-gray-300"
+                      />
+                    </td>
                     <td className="px-2 py-1.5 text-right text-gray-500">${market.toFixed(2)}</td>
                     <td className="px-2 py-1.5 text-center">
                       <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{tier.label}</span>

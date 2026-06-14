@@ -13,12 +13,9 @@ const DEFAULT_STATE: AppState = {
     priceSource: 'market',
     ebayFvfPct: 0.1325,
     transactionFee: 0.30,
-    roundTo: '0.05',
+    roundTo: 'none',
     tiers: [
       {
-        // TCGPlayer charges ~$1.50 shipping on orders under $5 → match that total exactly
-        // Item price ends up ≈ market price, floor at $0.99
-        // Net: ~96–114% of market (cheap cards overperform, pulls average up)
         id: 'pwe-small',
         label: 'PWE Small',
         maxMarketPrice: 4.99,
@@ -30,8 +27,6 @@ const DEFAULT_STATE: AppState = {
         itemFloorPrice: 0.99,
       },
       {
-        // TCGPlayer free shipping kicks in at $5 → add 20% eBay premium to hit ~85% net
-        // Buyer pays ~20% more than TCGPlayer, within normal eBay range
         id: 'pwe-mid',
         label: 'PWE Mid',
         maxMarketPrice: 20,
@@ -39,12 +34,10 @@ const DEFAULT_STATE: AppState = {
         actualShippingCost: 0.74,
         packagingCost: 0.12,
         competitorShipping: 0.00,
-        premiumPct: 0.20,
+        premiumPct: 0.0,
         itemFloorPrice: 0.99,
       },
       {
-        // High-value cards: tracked required, 15% eBay premium over TCP free-ship price
-        // Buyers expect tracked + buyer protection premium on eBay for expensive cards
         id: 'tracked',
         label: 'Tracked',
         maxMarketPrice: null,
@@ -52,13 +45,13 @@ const DEFAULT_STATE: AppState = {
         actualShippingCost: 4.50,
         packagingCost: 0.12,
         competitorShipping: 0.00,
-        premiumPct: 0.15,
+        premiumPct: 0.0,
         itemFloorPrice: 0.99,
       },
     ],
   },
   ebay: {
-    titleTemplate: '{name} {set} #{number} {condition} MTG Magic',
+    titleTemplate: '{name} {set} #{number} {foil}MTG Magic',
     conditionDescription: 'Shipped in a sleeve and top-loader.',
     categoryId: '2536',
     listingDuration: 'GTC',
@@ -175,6 +168,7 @@ export default function App() {
               cards={state.cards}
               pricing={state.pricing}
               ebay={state.ebay}
+              onCards={setCards}
               onBack={() => setStep(3)}
               onReset={() => setState(DEFAULT_STATE)}
             />

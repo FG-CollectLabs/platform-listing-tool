@@ -283,7 +283,7 @@ export default function Step2Configure({ cards, pricing, ebay, onPricing, onEbay
             </div>
           </div>
           <p className="text-xs text-blue-700">
-            <strong>85% net target:</strong> PWE Small nets 96–196% (cheap cards pull average up), PWE Mid nets ~84–94% at 20% premium, Tracked nets ~82–87% at 15% premium. Blended across all orders ≈ 85–90%.
+            <strong>Net at 0% premium:</strong> PWE Small ≈ 96–196% (cheap cards overperform, pull average up). PWE Mid ≈ 72–80% (eBay fees are higher than TCP and you're charging shipping where TCP is free). If you want ~85% on mid-tier cards, set eBay premium to ~10–13%.
           </p>
         </div>
       )}
@@ -441,7 +441,7 @@ export default function Step2Configure({ cards, pricing, ebay, onPricing, onEbay
         {showEbay && (
           <div className="p-4 space-y-4">
             <div>
-              <Label hint="tokens: {name} {set} {number} {condition} {rarity} — max 80 chars">Title template</Label>
+              <Label hint="tokens: {name} {set} {number} {condition} {rarity} {foil} — {foil} outputs 'Foil ' or '' — max 80 chars">Title template</Label>
               <Input value={ebay.titleTemplate} onChange={(e) => onEbay({ ...ebay, titleTemplate: e.target.value })} />
             </div>
             <div>

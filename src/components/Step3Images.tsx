@@ -89,24 +89,68 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       )
     : scopedCards
 
-  function loadFiles(files: FileList) {
-    const newImgs: UploadedImage[] = []
-    for (const file of files) {
-      if (!file.type.startsWith('image/')) continue
-      newImgs.push({
+  function addImageFiles(files: File[]) {
+    const newImgs: UploadedImage[] = files
+      .filter(f => f.type.startsWith('image/'))
+      .map(f => ({
         id: crypto.randomUUID(),
-        objectUrl: URL.createObjectURL(file),
-        fileName: file.name,
-        side: isBackFilename(file.name) ? 'back' : 'front',
+        objectUrl: URL.createObjectURL(f),
+        fileName: f.name,
+        side: isBackFilename(f.name) ? 'back' : 'front' as 'front' | 'back',
         assignedTo: null,
-      })
-    }
+      }))
     setImages(prev => quickFilenameMatch([...prev, ...newImgs], scopedCards))
   }
 
-  const onDrop = useCallback((e: React.DragEvent) => {
+  function loadFiles(files: FileList) {
+    addImageFiles(Array.from(files))
+  }
+
+  // Recursively collect all image files from a dropped directory entry
+  async function collectFromEntry(entry: FileSystemEntry): Promise<File[]> {
+    if (entry.isFile) {
+      return new Promise(resolve => {
+        (entry as FileSystemFileEntry).file(
+          f => resolve(f.type.startsWith('image/') ? [f] : []),
+          () => resolve([])
+        )
+      })
+    }
+    if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader()
+      const allEntries: FileSystemEntry[] = []
+      await new Promise<void>(resolve => {
+        function readBatch() {
+          reader.readEntries(batch => {
+            if (batch.length === 0) { resolve(); return }
+            allEntries.push(...batch)
+            readBatch()
+          }, () => resolve())
+        }
+        readBatch()
+      })
+      const nested = await Promise.all(allEntries.map(collectFromEntry))
+      return nested.flat()
+    }
+    return []
+  }
+
+  const onDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false)
-    loadFiles(e.dataTransfer.files)
+
+    // Use DataTransferItemList to support dropped folders
+    const items = Array.from(e.dataTransfer.items)
+    const hasEntries = items.length > 0 && typeof items[0].webkitGetAsEntry === 'function'
+
+    if (hasEntries) {
+      const entries = items.map(i => i.webkitGetAsEntry()).filter(Boolean) as FileSystemEntry[]
+      const files = (await Promise.all(entries.map(collectFromEntry))).flat()
+      // Sort by name so front/back pairs stay ordered
+      files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      addImageFiles(files)
+    } else {
+      loadFiles(e.dataTransfer.files)
+    }
   }, [images, scopedCards])
 
   function toggleSide(id: string) {
@@ -219,10 +263,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       >
         <input ref={inputRef} type="file" accept="image/*" multiple className="hidden"
           onChange={e => { if (e.target.files) loadFiles(e.target.files) }} />
-        <p className="text-gray-700 font-medium">Drop card photos here or click to browse</p>
+        <p className="text-gray-700 font-medium">Drop card photos or a folder here, or click to browse</p>
         <p className="text-gray-400 text-xs mt-0.5">
-          Name by card number (<code>058.jpg</code>) or name (<code>sol-ring.jpg</code>).
-          Back face: <code>058-back.jpg</code>
+          Name by card number (<code>058.jpg</code>) or card name (<code>sol-ring.jpg</code>).
+          Back face: <code>058-back.jpg</code>. Dropping a folder loads all images inside it.
         </p>
       </div>
 
