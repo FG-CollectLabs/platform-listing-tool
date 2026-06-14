@@ -20,10 +20,7 @@ function PctBadge({ pct, warn = 0.80 }: { pct: number; warn?: number }) {
   )
 }
 
-export default function Step4Export({ cards, pricing, ebay, onCards, onBack, onReset }: Props) {
-  function setSku(tcgplayerId: string, sku: string) {
-    onCards(cards.map(c => c.tcgplayerId === tcgplayerId ? { ...c, sku: sku || undefined } : c))
-  }
+export default function Step4Export({ cards, pricing, ebay, onCards: _onCards, onBack, onReset }: Props) {
   const listable = cards.filter((c) => c.totalQuantity > 0)
   const withImages  = listable.filter((c) => c.imageObjectUrl).length
   const withBackImg = listable.filter((c) => c.imageObjectUrlBack).length
@@ -124,7 +121,6 @@ export default function Step4Export({ cards, pricing, ebay, onCards, onBack, onR
             <thead className="bg-gray-50 sticky top-0 border-b border-gray-200">
               <tr>
                 <th className="text-left px-4 py-2 font-medium text-gray-500">Card</th>
-                <th className="text-left px-2 py-2 font-medium text-gray-500">SKU</th>
                 <th className="text-right px-2 py-2 font-medium text-gray-500">Market</th>
                 <th className="text-center px-2 py-2 font-medium text-gray-500">Tier</th>
                 <th className="text-right px-2 py-2 font-medium text-gray-500">Item</th>
@@ -142,15 +138,9 @@ export default function Step4Export({ cards, pricing, ebay, onCards, onBack, onR
                 const pct   = computeNetPct(c, pricing)
                 return (
                   <tr key={c.tcgplayerId} className="hover:bg-gray-50">
-                    <td className="px-4 py-1.5 font-medium text-gray-800 max-w-36 truncate">{c.productName}</td>
-                    <td className="px-2 py-1">
-                      <input
-                        type="text"
-                        value={c.sku ?? ''}
-                        onChange={e => setSku(c.tcgplayerId, e.target.value)}
-                        placeholder="—"
-                        className="w-24 text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 text-gray-700 placeholder-gray-300"
-                      />
+                    <td className="px-4 py-1.5 max-w-48 truncate">
+                      <span className="font-medium text-gray-800">{c.productName}</span>
+                      {c.sku && <span className="ml-1.5 text-[10px] text-gray-400 font-mono">{c.sku}</span>}
                     </td>
                     <td className="px-2 py-1.5 text-right text-gray-500">${market.toFixed(2)}</td>
                     <td className="px-2 py-1.5 text-center">

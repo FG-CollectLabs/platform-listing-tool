@@ -1,4 +1,4 @@
-export const VERSION = '1.2.0'
+export const VERSION = '1.2.1'
 
 export interface Release {
   version: string
@@ -7,6 +7,14 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.2.1',
+    date: '2026-06-14',
+    notes: [
+      'SKU / location input moved to Step 3 (Images) — set it per card while matching photos, not after',
+      'Step 4 shows SKU inline next to card name (read-only) for reference before export',
+    ],
+  },
   {
     version: '1.2.0',
     date: '2026-06-14',

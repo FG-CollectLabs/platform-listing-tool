@@ -68,6 +68,10 @@ interface Props {
   onNext: () => void
 }
 
+function setSku(cards: TcgCard[], tcgplayerId: string, sku: string): TcgCard[] {
+  return cards.map(c => c.tcgplayerId === tcgplayerId ? { ...c, sku: sku || undefined } : c)
+}
+
 export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [images, setImages]         = useState<UploadedImage[]>([])
@@ -471,12 +475,20 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                       onUnassign={() => unassignSlot(card.tcgplayerId, 'back')}
                     />
 
-                    {/* Card info */}
+                    {/* Card info + SKU */}
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{card.productName}</p>
                       <p className="text-xs text-gray-400 truncate">
                         #{card.number} · {card.setName} · {card.condition}
                       </p>
+                      <input
+                        type="text"
+                        value={card.sku ?? ''}
+                        onChange={e => onCards(setSku(cards, card.tcgplayerId, e.target.value))}
+                        onClick={e => e.stopPropagation()}
+                        placeholder="SKU / location"
+                        className="mt-1 w-full text-xs border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 text-gray-700 placeholder-gray-300 bg-white"
+                      />
                     </div>
                   </div>
                 )
