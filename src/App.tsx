@@ -5,6 +5,7 @@ import Step2Configure from './components/Step2Configure'
 import Step3Images from './components/Step3Images'
 import Step4Export from './components/Step4Export'
 import ImageLibrary from './components/ImageLibrary'
+import ChangelogModal from './components/ChangelogModal'
 
 const DEFAULT_STATE: AppState = {
   step: 1,
@@ -74,6 +75,7 @@ const STEPS = [
 export default function App() {
   const [state, setState] = useState<AppState>(DEFAULT_STATE)
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [changelogOpen, setChangelogOpen] = useState(false)
 
   function setStep(step: AppState['step']) {
     setState((s) => ({ ...s, step }))
@@ -86,11 +88,18 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-100">
       <ImageLibrary open={libraryOpen} onClose={() => setLibraryOpen(false)} />
+      <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
       <header className="bg-white border-b shadow-sm">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
+          <div className="flex items-baseline gap-2">
             <h1 className="text-lg font-bold text-gray-900">Platform Listing Tool</h1>
-            <p className="text-xs text-gray-400">TCGPlayer CSV → eBay File Exchange</p>
+            <button
+              onClick={() => setChangelogOpen(true)}
+              className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+              title="View changelog"
+            >
+              v1.2.0
+            </button>
           </div>
           <div className="flex items-center gap-4">
             {state.cards.length > 0 && (
