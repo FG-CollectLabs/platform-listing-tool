@@ -1,0 +1,11 @@
+services:
+  platform-listing-tool:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8082:8080"          # change host port if 8082 is taken
+    environment:
+      - PORT=8080
+      - BASE_URL=https://platform-listings.futuregadgetlabs.com   # your Cloudflare Tunnel domain
+    volumes:
+      - ./uploads:/app/uploads   # persist uploaded images on the host
