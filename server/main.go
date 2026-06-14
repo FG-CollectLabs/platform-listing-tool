@@ -126,7 +126,7 @@ func main() {
 			return
 		}
 
-		var metas []ImageMeta
+		metas := make([]ImageMeta, 0)
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
