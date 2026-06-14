@@ -1,4 +1,4 @@
-export const VERSION = '1.2.1'
+export const VERSION = '1.3.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,18 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.3.0',
+    date: '2026-06-14',
+    notes: [
+      'Step 3: "Unmatched only" toggle in card list — quickly find cards without a photo assigned',
+      'Step 3: click any matched card row to verify — side-by-side comparison of your scan vs. TCGPlayer stock image; accept or reassign',
+      'eBay export: TCGPlayer stock image added as 3rd photo (front | back | stock)',
+      'eBay export: added Type (Individual Card), Professional Grader, Certification Number, Grade (Does Not Apply) item specifics',
+      'Packaging description default changed to "Shipped in a penny sleeve and card saver" — still configurable in Step 2',
+      'Layout widened for easier reading of card names and set info',
+    ],
+  },
   {
     version: '1.2.1',
     date: '2026-06-14',

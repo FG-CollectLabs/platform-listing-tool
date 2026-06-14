@@ -117,6 +117,10 @@ export function generateEbayCsv(
     'C:Finish',
     'C:Graded',
     'C:Age Level',
+    'C:Type',
+    'C:Professional Grader',
+    'C:Certification Number',
+    'C:Grade',
   ].join(','))
 
   const listable = cards.filter((c) => c.totalQuantity > 0)
@@ -124,7 +128,9 @@ export function generateEbayCsv(
   for (const card of listable) {
     const price = computeItemPrice(card, pricing)
     const tier  = tierForCard(card, pricing)
-    const picUrl = [card.imageFileName, card.imageFileNameBack].filter(Boolean).join('|') || card.photoUrl || ''
+    const scans = [card.imageFileName, card.imageFileNameBack].filter(Boolean)
+    const stockUrl = card.photoUrl || ''
+    const picUrl = scans.length > 0 ? [...scans, stockUrl].filter(Boolean).join('|') : stockUrl
     const title = resolveTitle(settings.titleTemplate, card)
     const description = buildDescription(card, settings.conditionDescription)
 
@@ -152,6 +158,10 @@ export function generateEbayCsv(
       isFoil(card.condition) ? 'Foil' : 'Non-Foil', // C:Finish
       'No',                             // C:Graded
       '13+',                            // C:Age Level
+      'Individual Card',                // C:Type
+      'Does Not Apply',                 // C:Professional Grader
+      'Does Not Apply',                 // C:Certification Number
+      'Does Not Apply',                 // C:Grade
     ))
 
     // If there are charged shipping costs, eBay draft format also supports a shipping column,

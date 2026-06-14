@@ -53,7 +53,7 @@ const DEFAULT_STATE: AppState = {
   },
   ebay: {
     titleTemplate: '{name} {set} #{number} {foil}MTG Magic',
-    conditionDescription: 'Shipped in a sleeve and top-loader.',
+    conditionDescription: 'Shipped in a penny sleeve and card saver.',
     categoryId: '2536',
     listingDuration: 'GTC',
     dispatchTimeMax: 2,
@@ -90,7 +90,7 @@ export default function App() {
       <ImageLibrary open={libraryOpen} onClose={() => setLibraryOpen(false)} />
       <ChangelogModal open={changelogOpen} onClose={() => setChangelogOpen(false)} />
       <header className="bg-white border-b shadow-sm">
-        <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-baseline gap-2">
             <h1 className="text-lg font-bold text-gray-900">Platform Listing Tool</h1>
             <button
@@ -98,7 +98,7 @@ export default function App() {
               className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
               title="View changelog"
             >
-              v1.2.1
+              v1.3.0
             </button>
           </div>
           <div className="flex items-center gap-4">
@@ -117,7 +117,7 @@ export default function App() {
 
       {/* Step nav */}
       <div className="bg-white border-b">
-        <div className="max-w-4xl mx-auto px-6 py-3 flex gap-1">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex gap-1">
           {STEPS.map((s, i) => {
             const done = state.step > s.n
             const active = state.step === s.n
@@ -144,7 +144,7 @@ export default function App() {
         </div>
       </div>
 
-      <main className="max-w-4xl mx-auto px-6 py-8">
+      <main className="max-w-6xl mx-auto px-6 py-8">
         <div className="bg-white rounded-2xl shadow-sm p-8">
           {state.step === 1 && (
             <Step1Import

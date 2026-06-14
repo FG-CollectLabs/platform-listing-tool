@@ -7,12 +7,10 @@ interface UploadedImage {
   objectUrl: string
   fileName: string
   side: 'front' | 'back'
-  assignedTo: string | null   // tcgplayerId
-  hostedUrl?: string          // URL after upload to server
-  hostedId?: string           // server ID for the uploaded image
+  assignedTo: string | null
+  hostedUrl?: string
+  hostedId?: string
 }
-
-// ─── filename matching ────────────────────────────────────────────────────────
 
 function normalizeBase(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -59,8 +57,6 @@ function quickFilenameMatch(imgs: UploadedImage[], cards: TcgCard[]): UploadedIm
   })
 }
 
-// ─── component ────────────────────────────────────────────────────────────────
-
 interface Props {
   cards: TcgCard[]
   onCards: (cards: TcgCard[]) => void
@@ -92,6 +88,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [defaultSku, setDefaultSku] = useState('')
+  const [showUnmatchedOnly, setShowUnmatchedOnly] = useState(false)
+  const [validatingCard, setValidatingCard] = useState<TcgCard | null>(null)
 
   const setNames = Array.from(new Set(cards.map(c => c.setName))).sort()
   const scopedCards = scopeSet === 'all' ? cards : cards.filter(c => c.setName === scopeSet)
@@ -100,6 +98,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         c.productName.toLowerCase().includes(filter.toLowerCase()) || c.number.includes(filter)
       )
     : scopedCards
+  const matchedCardIds = new Set(images.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
+  const displayCards = showUnmatchedOnly ? filteredCards.filter(c => !matchedCardIds.has(c.tcgplayerId)) : filteredCards
 
   function addImageFiles(files: File[]) {
     const newImgs: UploadedImage[] = files
@@ -126,7 +126,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     addImageFiles(Array.from(files))
   }
 
-  // Recursively collect all image files from a dropped directory entry
   async function collectFromEntry(entry: FileSystemEntry): Promise<File[]> {
     if (entry.isFile) {
       return new Promise(resolve => {
@@ -157,15 +156,11 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
   const onDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault(); setDragging(false)
-
-    // Use DataTransferItemList to support dropped folders
     const items = Array.from(e.dataTransfer.items)
     const hasEntries = items.length > 0 && typeof items[0].webkitGetAsEntry === 'function'
-
     if (hasEntries) {
       const entries = items.map(i => i.webkitGetAsEntry()).filter(Boolean) as FileSystemEntry[]
       const files = (await Promise.all(entries.map(collectFromEntry))).flat()
-      // Sort by name so front/back pairs stay ordered
       files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
       addImageFiles(files)
     } else {
@@ -258,7 +253,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       return {
         ...card,
         imageObjectUrl:     frontImg?.objectUrl,
-        // Use hosted URL in CSV if available, else fall back to local filename
         imageFileName:      frontImg?.hostedUrl ?? frontImg?.fileName,
         imageObjectUrlBack: backImg?.objectUrl,
         imageFileNameBack:  backImg?.hostedUrl ?? backImg?.fileName,
@@ -274,12 +268,69 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
   return (
     <div className="space-y-5">
+      {/* Validation modal */}
+      {validatingCard && (() => {
+        const card = validatingCard
+        const frontImg = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+            onClick={() => setValidatingCard(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Verify match</h3>
+                <button onClick={() => setValidatingCard(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+              <p className="text-sm text-gray-600">
+                <strong>{card.productName}</strong> — {card.setName} #{card.number} · {card.rarity}
+              </p>
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide">Your scan</p>
+                  {frontImg
+                    ? <img src={frontImg.objectUrl} alt="scan"
+                        className="w-full rounded-xl border-2 border-blue-200 object-contain max-h-80" />
+                    : <div className="w-full aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 text-sm">No scan assigned</div>
+                  }
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide">TCGPlayer stock</p>
+                  {card.photoUrl
+                    ? <img src={card.photoUrl} alt="stock"
+                        className="w-full rounded-xl border-2 border-gray-200 object-contain max-h-80" />
+                    : <div className="w-full aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 text-sm">No stock image</div>
+                  }
+                </div>
+              </div>
+              <div className="flex justify-between pt-1">
+                <button
+                  onClick={() => {
+                    if (frontImg) {
+                      setImages(prev => prev.map(img => img.id === frontImg.id ? { ...img, assignedTo: null } : img))
+                    }
+                    setValidatingCard(null)
+                  }}
+                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-5 py-2 rounded-lg font-medium transition-colors"
+                >
+                  Wrong card — reassign
+                </button>
+                <button
+                  onClick={() => setValidatingCard(null)}
+                  className="bg-green-600 hover:bg-green-700 text-white px-8 py-2 rounded-lg font-medium transition-colors"
+                >
+                  Looks correct ✓
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Match Card Images</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Upload photos and run auto-match. Toggle <strong className="text-blue-700">F</strong> / <strong className="text-purple-700">B</strong> on a photo
-          to mark front or back face, then click a card row to assign it.
-          Suffix files with <code className="text-xs bg-gray-100 px-1 rounded">-back</code> to auto-mark back faces on upload.
+          Upload photos and run auto-match. Toggle F/B on a photo to mark front or back face,
+          then click a card row to assign it. Suffix files with -back to auto-mark back faces on upload.
         </p>
       </div>
 
@@ -311,8 +362,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
           onChange={e => { if (e.target.files) loadFiles(e.target.files) }} />
         <p className="text-gray-700 font-medium">Drop card photos or a folder here, or click to browse</p>
         <p className="text-gray-400 text-xs mt-0.5">
-          Name by card number (<code>058.jpg</code>) or card name (<code>sol-ring.jpg</code>).
-          Back face: <code>058-back.jpg</code>. Dropping a folder loads all images inside it.
+          Name by card number (058.jpg) or card name (sol-ring.jpg).
+          Back face: 058-back.jpg. Dropping a folder loads all images inside it.
         </p>
       </div>
 
@@ -332,11 +383,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         )}
 
         {setNames.length > 1 && (
-          <select
-            value={scopeSet}
-            onChange={e => setScopeSet(e.target.value)}
-            className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-          >
+          <select value={scopeSet} onChange={e => setScopeSet(e.target.value)}
+            className="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400">
             <option value="all">All decks ({cards.length} cards)</option>
             {setNames.map(s => (
               <option key={s} value={s}>{s} ({cards.filter(c => c.setName === s).length} cards)</option>
@@ -346,7 +394,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
         {images.length > 0 && (
           <div className="ml-auto flex items-center gap-2">
-            {/* Upload to server */}
             {(() => {
               const needsUpload = images.filter(i => i.assignedTo && !i.hostedUrl)
               const hostedCount = images.filter(i => i.hostedUrl).length
@@ -354,7 +401,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                 <button
                   onClick={handleUploadToServer}
                   disabled={uploading || needsUpload.length === 0}
-                  title={needsUpload.length === 0 ? 'All assigned images are hosted' : `Upload ${needsUpload.length} image${needsUpload.length > 1 ? 's' : ''} to server`}
                   className={`text-xs px-4 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1.5
                     ${needsUpload.length > 0 && !uploading
                       ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
@@ -369,15 +415,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
               )
             })()}
 
-            {/* Auto-match */}
             <button
               onClick={handleAutoMatch}
               disabled={matching}
               className="text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-4 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-2"
             >
-              {matching
-                ? <><span className="inline-block animate-spin">⟳</span> Matching…</>
-                : '⚡ Run auto-match'}
+              {matching ? <><span className="inline-block animate-spin">⟳</span> Matching…</> : '⚡ Run auto-match'}
             </button>
           </div>
         )}
@@ -386,7 +429,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       {matchStats && (
         <div className="text-xs text-gray-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
           Auto-match assigned <strong>{matchStats.byFilename}</strong> image{matchStats.byFilename !== 1 ? 's' : ''} by filename.
-          Drag remaining unmatched photos to a card row, or rename files to card numbers (e.g. <code className="bg-blue-100 px-0.5 rounded">058.jpg</code>) before uploading.
         </div>
       )}
       {uploadError && (
@@ -398,8 +440,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       {/* Main matcher */}
       {images.length > 0 && (
         <div className="grid gap-5" style={{ gridTemplateColumns: '2fr 3fr' }}>
-
-          {/* ── Left: image tray ── */}
+          {/* Left: image tray */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium text-gray-600">Photos ({images.length})</span>
@@ -423,36 +464,24 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                         : 'border-gray-200 hover:border-blue-300 hover:shadow-md'}`}
                   >
                     <img src={img.objectUrl} alt={img.fileName} className="w-full aspect-[2/3] object-cover" />
-
-                    {/* F / B toggle */}
                     <button
                       onClick={e => { e.stopPropagation(); toggleSide(img.id) }}
-                      title="Toggle front / back"
                       className={`absolute top-2 left-2 text-[11px] font-bold w-7 h-7 rounded-full shadow-md flex items-center justify-center transition-colors
-                        ${img.side === 'front'
-                          ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                          : 'bg-purple-600 hover:bg-purple-700 text-white'}`}
+                        ${img.side === 'front' ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-purple-600 hover:bg-purple-700 text-white'}`}
                     >
                       {img.side === 'front' ? 'F' : 'B'}
                     </button>
-
-                    {/* Hosted indicator */}
                     {img.hostedUrl && (
-                      <div className="absolute top-2 right-2 w-5 h-5 bg-emerald-600 rounded-full flex items-center justify-center shadow"
-                        title={img.hostedUrl}>
+                      <div className="absolute top-2 right-2 w-5 h-5 bg-emerald-600 rounded-full flex items-center justify-center shadow" title={img.hostedUrl}>
                         <span className="text-white text-[9px] font-bold">☁</span>
                       </div>
                     )}
-
-                    {/* Assignment label at bottom */}
                     <div className={`absolute bottom-0 left-0 right-0 px-2 py-1.5 text-[10px] leading-snug
                       ${assignedCard ? 'bg-green-800/85 text-white' : 'bg-black/65 text-white/75'}`}>
                       <div className="truncate font-medium">
                         {assignedCard ? assignedCard.productName : img.fileName}
                       </div>
-                      {assignedCard && (
-                        <div className="text-white/60">#{assignedCard.number}</div>
-                      )}
+                      {assignedCard && <div className="text-white/60">#{assignedCard.number}</div>}
                     </div>
                   </div>
                 )
@@ -460,12 +489,19 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
             </div>
           </div>
 
-          {/* ── Right: card list ── */}
+          {/* Right: card list */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-medium text-gray-600">
                 Cards ({filteredCards.length}{scopeSet !== 'all' ? ` in ${scopeSet}` : ''})
               </span>
+              <button
+                onClick={() => setShowUnmatchedOnly(v => !v)}
+                className={`text-xs px-2.5 py-1 rounded-full font-medium transition-colors flex-shrink-0
+                  ${showUnmatchedOnly ? 'bg-yellow-100 text-yellow-700 ring-1 ring-yellow-300' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+              >
+                {showUnmatchedOnly ? `Unmatched (${displayCards.length})` : 'Unmatched only'}
+              </button>
               <input
                 type="text"
                 placeholder="Filter by name or #"
@@ -477,52 +513,48 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
             {selectedImg && (
               <div className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-1.5 border border-blue-100">
-                Click any card row to assign "<strong>{selectedImg.fileName}</strong>" as its{' '}
+                Click any card row to assign "{selectedImg.fileName}" as its{' '}
                 <strong>{selectedImg.side === 'front' ? 'front' : 'back'} face</strong>.
-                Toggle F/B on the photo first if needed.
               </div>
             )}
 
             <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
-              {filteredCards.map(card => {
+              {displayCards.map(card => {
                 const frontImg = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
                 const backImg  = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'back')
                 const hasAny   = !!(frontImg || backImg)
-                const isClickable = !!selectedImg
+                const isAssigning = !!selectedImg
+                const isValidatable = !selectedImg && !!frontImg
 
                 return (
                   <div
                     key={card.tcgplayerId}
                     onClick={() => {
-                      if (!selectedImg) return
-                      assign(selectedImg.id, card.tcgplayerId, selectedImg.side)
+                      if (selectedImg) {
+                        assign(selectedImg.id, card.tcgplayerId, selectedImg.side)
+                      } else if (frontImg) {
+                        setValidatingCard(card)
+                      }
                     }}
                     className={`flex items-center gap-3 px-3 py-2 rounded-xl border transition-all
                       ${hasAny ? 'border-green-200 bg-green-50' : 'border-gray-100 bg-gray-50'}
-                      ${isClickable ? 'cursor-pointer hover:border-blue-400 hover:bg-blue-50 hover:shadow-sm' : ''}`}
+                      ${isAssigning ? 'cursor-pointer hover:border-blue-400 hover:bg-blue-50 hover:shadow-sm' :
+                        isValidatable ? 'cursor-pointer hover:border-green-300 hover:shadow-sm' : ''}`}
                   >
-                    {/* Front slot */}
-                    <Slot
-                      img={frontImg}
-                      label="FRONT"
-                      highlight={isClickable && selectedImg?.side === 'front' ? 'blue' : null}
-                      onUnassign={() => unassignSlot(card.tcgplayerId, 'front')}
-                    />
-
-                    {/* Back slot */}
-                    <Slot
-                      img={backImg}
-                      label="BACK"
-                      highlight={isClickable && selectedImg?.side === 'back' ? 'purple' : null}
-                      onUnassign={() => unassignSlot(card.tcgplayerId, 'back')}
-                    />
-
-                    {/* Card info + SKU */}
+                    <Slot img={frontImg} label="FRONT"
+                      highlight={isAssigning && selectedImg?.side === 'front' ? 'blue' : null}
+                      onUnassign={() => unassignSlot(card.tcgplayerId, 'front')} />
+                    <Slot img={backImg} label="BACK"
+                      highlight={isAssigning && selectedImg?.side === 'back' ? 'purple' : null}
+                      onUnassign={() => unassignSlot(card.tcgplayerId, 'back')} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{card.productName}</p>
                       <p className="text-xs text-gray-400 truncate">
                         #{card.number} · {card.setName} · {card.condition}
                       </p>
+                      {isValidatable && (
+                        <span className="text-[10px] text-green-600 font-medium">Click to verify ↗</span>
+                      )}
                       <input
                         type="text"
                         value={card.sku ?? ''}
@@ -541,53 +573,35 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       )}
 
       <div className="flex justify-between pt-1">
-        <button onClick={onBack}
-          className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg font-medium transition-colors">
-          ← Back
-        </button>
+        <button onClick={onBack} className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg font-medium transition-colors">← Back</button>
         <div className="flex gap-3">
           <button onClick={() => { onCards(cards); onNext() }}
-            className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg font-medium border border-gray-300 transition-colors">
-            Skip images
-          </button>
+            className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg font-medium border border-gray-300 transition-colors">Skip images</button>
           <button onClick={applyAndContinue}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">
-            Continue to Export →
-          </button>
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">Continue to Export →</button>
         </div>
       </div>
     </div>
   )
 }
 
-// ─── Slot sub-component ───────────────────────────────────────────────────────
-
-function Slot({
-  img, label, highlight, onUnassign,
-}: {
-  img: UploadedImage | undefined
-  label: string
-  highlight: 'blue' | 'purple' | null
-  onUnassign: () => void
+function Slot({ img, label, highlight, onUnassign }: {
+  img: UploadedImage | undefined; label: string; highlight: 'blue' | 'purple' | null; onUnassign: () => void
 }) {
   return (
     <div className="flex-shrink-0">
       <div className="text-[9px] text-gray-400 text-center mb-0.5 font-semibold tracking-wide">{label}</div>
       {img ? (
         <div className="relative group">
-          <img src={img.objectUrl} alt={label}
-            className="w-14 h-[4.375rem] object-cover rounded-lg border-2 border-green-300 shadow-sm" />
-          <button
-            onClick={e => { e.stopPropagation(); onUnassign() }}
-            className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full text-[9px] items-center justify-center shadow hidden group-hover:flex transition-colors"
-          >✕</button>
+          <img src={img.objectUrl} alt={label} className="w-14 h-[4.375rem] object-cover rounded-lg border-2 border-green-300 shadow-sm" />
+          <button onClick={e => { e.stopPropagation(); onUnassign() }}
+            className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full text-[9px] items-center justify-center shadow hidden group-hover:flex transition-colors">✕</button>
         </div>
       ) : (
         <div className={`w-14 h-[4.375rem] rounded-lg border-2 border-dashed flex items-center justify-center text-xs font-bold transition-colors
-          ${highlight === 'blue'   ? 'border-blue-400 bg-blue-50 text-blue-400' :
+          ${highlight === 'blue' ? 'border-blue-400 bg-blue-50 text-blue-400' :
             highlight === 'purple' ? 'border-purple-400 bg-purple-50 text-purple-400' :
-            'border-gray-200 text-gray-300'}`}
-        >
+            'border-gray-200 text-gray-300'}`}>
           {label[0]}
         </div>
       )}
