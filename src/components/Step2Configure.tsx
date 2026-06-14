@@ -441,7 +441,7 @@ export default function Step2Configure({ cards, pricing, ebay, onPricing, onEbay
         {showEbay && (
           <div className="p-4 space-y-4">
             <div>
-              <Label hint="tokens: {name} {set} {number} {condition} {condition_abbr} {rarity} {foil} — {foil}→"Foil "/""  {condition_abbr}→NM/LP/MP/HP/DMG — max 80 chars">Title template</Label>
+              <Label hint="tokens: {name} {set} {number} {condition} {condition_abbr} {rarity} {foil} — {condition_abbr}=NM/LP/MP/HP/DMG, {foil}=Foil or blank — max 80 chars">Title template</Label>
               <Input value={ebay.titleTemplate} onChange={(e) => onEbay({ ...ebay, titleTemplate: e.target.value })} />
             </div>
             <div>
