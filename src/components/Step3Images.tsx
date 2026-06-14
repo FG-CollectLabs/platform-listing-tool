@@ -286,14 +286,14 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       {/* Batch SKU */}
       <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
         <div className="flex-shrink-0">
-          <p className="text-xs font-semibold text-gray-700">Default SKU / location</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Stamped on every card when matched — override per card below</p>
+          <p className="text-xs font-semibold text-gray-700">Batch SKU / location</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Set before each folder drop — change between folders to label each batch</p>
         </div>
         <input
           type="text"
           value={defaultSku}
           onChange={e => setDefaultSku(e.target.value)}
-          placeholder="e.g. Binder A · Row 3"
+          placeholder="e.g. E-MTG-01-01"
           className="ml-auto w-56 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 placeholder-gray-300"
         />
       </div>
