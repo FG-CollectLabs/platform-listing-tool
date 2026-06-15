@@ -35,6 +35,8 @@ export function parseTcgplayerCsv(text: string): TcgCard[] {
     totalQuantity: int(row['Total Quantity']) || int(row['Add to Quantity']) || 1,
     addToQuantity: int(row['Add to Quantity']),
     tcgMarketplacePrice: num(row['TCG Marketplace Price']),
-    photoUrl: row['Photo URL'] ?? '',
+    photoUrl: row['Photo URL'] || (row['TCGplayer Id']
+      ? `https://product-images.tcgplayer.com/fit-in/400x558/${row['TCGplayer Id']}.jpg`
+      : ''),
   }))
 }
