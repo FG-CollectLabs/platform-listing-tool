@@ -2,6 +2,12 @@ import { useRef, useState, useCallback } from 'react'
 import type { TcgCard } from '../types'
 import { uploadImage } from '../utils/imageApi'
 
+interface CatalogCard {
+  number: string
+  finish: string
+  image_url: string
+}
+
 interface UploadedImage {
   id: string
   objectUrl: string
@@ -47,7 +53,11 @@ function quickFilenameMatch(imgs: UploadedImage[], cards: TcgCard[]): UploadedIm
     let best: { card: TcgCard; score: number } | null = null
     for (const card of cards) {
       const s = filenameScore(img.fileName, card)
-      if (s >= 0.75 && (!best || s > best.score)) best = { card, score: s }
+      const betterScore = !best || s > best.score
+      const tiebreakNonFoil = best !== null && s === best.score
+        && best.card.condition.toLowerCase().includes('foil')
+        && !card.condition.toLowerCase().includes('foil')
+      if (s >= 0.75 && (betterScore || tiebreakNonFoil)) best = { card, score: s }
     }
     if (best && !usedSet.has(best.card.tcgplayerId)) {
       usedSet.add(best.card.tcgplayerId)
@@ -90,6 +100,33 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [defaultSku, setDefaultSku] = useState('')
   const [showUnmatchedOnly, setShowUnmatchedOnly] = useState(false)
   const [validatingCard, setValidatingCard] = useState<TcgCard | null>(null)
+  const [catalogCode, setCatalogCode] = useState('')
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogImages, setCatalogImages] = useState<Map<string, string>>(new Map())
+  const [catalogLoaded, setCatalogLoaded] = useState('')
+
+  async function loadCatalog() {
+    const code = catalogCode.trim().toLowerCase()
+    if (!code) return
+    setCatalogLoading(true)
+    try {
+      const res = await fetch(`https://market.futuregadgetlabs.com/v1/sets/mtg/${code}/cards`)
+      const data = await res.json()
+      const catalogCards: CatalogCard[] = data.cards || []
+      const map = new Map<string, string>()
+      for (const c of catalogCards) {
+        if (c.finish === 'nf' && c.image_url) map.set(c.number, c.image_url)
+      }
+      for (const c of catalogCards) {
+        if (c.finish === 'f' && c.image_url && !map.has(c.number)) map.set(c.number, c.image_url)
+      }
+      setCatalogImages(map)
+      setCatalogLoaded(code)
+    } catch (e) {
+      console.error('Failed to load catalog:', e)
+    }
+    setCatalogLoading(false)
+  }
 
   const setNames = Array.from(new Set(cards.map(c => c.setName))).sort()
   const scopedCards = scopeSet === 'all' ? cards : cards.filter(c => c.setName === scopeSet)
@@ -207,7 +244,11 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       let best: { card: TcgCard; score: number } | null = null
       for (const card of target) {
         const s = filenameScore(img.fileName, card)
-        if (s >= 0.7 && (!best || s > best.score)) best = { card, score: s }
+        const betterScore = !best || s > best.score
+        const tiebreakNonFoil = best !== null && s === best.score
+          && best.card.condition.toLowerCase().includes('foil')
+          && !card.condition.toLowerCase().includes('foil')
+        if (s >= 0.7 && (betterScore || tiebreakNonFoil)) best = { card, score: s }
       }
       if (best && !usedSet.has(best.card.tcgplayerId)) {
         img.assignedTo = best.card.tcgplayerId
@@ -294,12 +335,16 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                   }
                 </div>
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide">TCGPlayer stock</p>
-                  {card.photoUrl
-                    ? <img src={card.photoUrl} alt="stock"
-                        className="w-full rounded-xl border-2 border-gray-200 object-contain max-h-80" />
-                    : <div className="w-full aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 text-sm">No stock image</div>
-                  }
+                  <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide">Stock image</p>
+                  {(() => {
+                    const stockUrl = catalogImages.get(card.number) || card.photoUrl
+                    return stockUrl
+                      ? <img src={stockUrl} alt="stock"
+                          className="w-full rounded-xl border-2 border-gray-200 object-contain max-h-80" />
+                      : <div className="w-full aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 text-sm text-center px-4">
+                          No stock image — load catalog above
+                        </div>
+                  })()}
                 </div>
               </div>
               <div className="flex justify-between pt-1">
@@ -347,6 +392,36 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
           placeholder="e.g. E-MTG-01-01"
           className="ml-auto w-56 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 placeholder-gray-300"
         />
+      </div>
+
+      {/* Catalog stock image loader */}
+      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+        <div className="flex-shrink-0">
+          <p className="text-xs font-semibold text-gray-700">Stock image catalog</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Load Scryfall images from market tracker for side-by-side validation</p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <input
+            type="text"
+            value={catalogCode}
+            onChange={e => setCatalogCode(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') loadCatalog() }}
+            placeholder="Set code, e.g. tmc"
+            className="w-36 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 placeholder-gray-300"
+          />
+          <button
+            onClick={loadCatalog}
+            disabled={catalogLoading || !catalogCode.trim()}
+            className="text-xs px-4 py-1.5 rounded-lg font-medium transition-colors bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 text-white"
+          >
+            {catalogLoading ? '⟳ Loading…' : 'Load'}
+          </button>
+          {catalogLoaded && (
+            <span className="text-[11px] text-green-700 font-medium bg-green-50 px-2 py-1 rounded-full border border-green-200">
+              {catalogImages.size} images · {catalogLoaded.toUpperCase()}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Drop zone */}
