@@ -2,11 +2,6 @@ import { useRef, useState, useCallback } from 'react'
 import type { TcgCard } from '../types'
 import { uploadImage } from '../utils/imageApi'
 
-interface CatalogCard {
-  number: string
-  finish: string
-  image_url: string
-}
 
 interface UploadedImage {
   id: string
@@ -100,30 +95,62 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [defaultSku, setDefaultSku] = useState('')
   const [showUnmatchedOnly, setShowUnmatchedOnly] = useState(false)
   const [validatingCard, setValidatingCard] = useState<TcgCard | null>(null)
-  const [catalogCode, setCatalogCode] = useState('')
+  const [reassignMode, setReassignMode]     = useState(false)
+  const [reassignSearch, setReassignSearch] = useState('')
+  const [catalogCode, setCatalogCode]       = useState('')
   const [catalogLoading, setCatalogLoading] = useState(false)
-  const [catalogImages, setCatalogImages] = useState<Map<string, string>>(new Map())
-  const [catalogLoaded, setCatalogLoaded] = useState('')
+  const [catalogError, setCatalogError]     = useState('')
+  const [catalogImages, setCatalogImages]   = useState<Map<string, string>>(new Map())
+  const [catalogLoaded, setCatalogLoaded]   = useState('')
+
+  function openValidation(card: TcgCard) {
+    setValidatingCard(card)
+    setReassignMode(false)
+    setReassignSearch('')
+  }
+
+  function closeValidation() {
+    setValidatingCard(null)
+    setReassignMode(false)
+    setReassignSearch('')
+  }
+
+  function reassignTo(frontImgId: string, newCard: TcgCard) {
+    setImages(prev => prev.map(img => {
+      // free any existing front already assigned to the target card
+      if (img.assignedTo === newCard.tcgplayerId && img.side === 'front' && img.id !== frontImgId) {
+        return { ...img, assignedTo: null }
+      }
+      if (img.id === frontImgId) return { ...img, assignedTo: newCard.tcgplayerId }
+      return img
+    }))
+    closeValidation()
+  }
 
   async function loadCatalog() {
     const code = catalogCode.trim().toLowerCase()
     if (!code) return
     setCatalogLoading(true)
+    setCatalogError('')
     try {
-      const res = await fetch(`https://market.futuregadgetlabs.com/v1/sets/mtg/${code}/cards`)
-      const data = await res.json()
-      const catalogCards: CatalogCard[] = data.cards || []
       const map = new Map<string, string>()
-      for (const c of catalogCards) {
-        if (c.finish === 'nf' && c.image_url) map.set(c.number, c.image_url)
-      }
-      for (const c of catalogCards) {
-        if (c.finish === 'f' && c.image_url && !map.has(c.number)) map.set(c.number, c.image_url)
+      let url: string = `https://api.scryfall.com/cards/search?q=set:${code}&unique=prints`
+      while (url) {
+        const res = await fetch(url)
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.details || `Scryfall error ${res.status}`)
+        for (const c of (data.data || [])) {
+          const num: string = c.collector_number
+          const imgUrl: string | undefined =
+            c.image_uris?.normal ?? c.card_faces?.[0]?.image_uris?.normal
+          if (imgUrl && !map.has(num)) map.set(num, imgUrl)
+        }
+        url = data.has_more ? data.next_page : ''
       }
       setCatalogImages(map)
       setCatalogLoaded(code)
     } catch (e) {
-      console.error('Failed to load catalog:', e)
+      setCatalogError(e instanceof Error ? e.message : 'Unknown error')
     }
     setCatalogLoading(false)
   }
@@ -313,14 +340,96 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       {validatingCard && (() => {
         const card = validatingCard
         const frontImg = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
+        const stockUrl = catalogImages.get(card.number) || card.photoUrl
+
+        // reassign mode: search + pick the correct card
+        if (reassignMode && frontImg) {
+          const q = reassignSearch.toLowerCase()
+          const candidates = cards.filter(c =>
+            c.tcgplayerId !== card.tcgplayerId && (
+              !q ||
+              c.productName.toLowerCase().includes(q) ||
+              c.number.includes(q)
+            )
+          )
+          return (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+              onClick={closeValidation}>
+              <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4"
+                onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Reassign scan</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">Pick the correct card for this scan</p>
+                  </div>
+                  <button onClick={closeValidation} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+                </div>
+                <div className="flex gap-4 items-start">
+                  <div className="flex-shrink-0">
+                    <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide mb-1">Your scan</p>
+                    <img src={frontImg.objectUrl} alt="scan"
+                      className="w-28 rounded-xl border-2 border-blue-200 object-contain" />
+                    <p className="text-[10px] text-gray-400 text-center mt-1 truncate max-w-[7rem]">{frontImg.fileName}</p>
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <input
+                      autoFocus
+                      type="text"
+                      placeholder="Search by name or card #"
+                      value={reassignSearch}
+                      onChange={e => setReassignSearch(e.target.value)}
+                      className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                    <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+                      {candidates.slice(0, 50).map(c => {
+                        const hasExistingFront = images.some(i => i.assignedTo === c.tcgplayerId && i.side === 'front')
+                        const cStockUrl = catalogImages.get(c.number)
+                        return (
+                          <div
+                            key={c.tcgplayerId}
+                            onClick={() => reassignTo(frontImg.id, c)}
+                            className="flex items-center gap-3 px-3 py-2 rounded-xl border border-gray-100 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-colors"
+                          >
+                            {cStockUrl
+                              ? <img src={cStockUrl} alt="" className="w-8 h-10 object-cover rounded flex-shrink-0" />
+                              : <div className="w-8 h-10 bg-gray-100 rounded flex-shrink-0" />
+                            }
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">{c.productName}</p>
+                              <p className="text-xs text-gray-400">#{c.number} · {c.condition}</p>
+                            </div>
+                            {hasExistingFront && (
+                              <span className="text-[10px] text-orange-500 font-medium flex-shrink-0">has scan</span>
+                            )}
+                          </div>
+                        )
+                      })}
+                      {candidates.length === 0 && (
+                        <p className="text-sm text-gray-400 text-center py-4">No cards match</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex justify-start pt-1">
+                  <button onClick={() => setReassignMode(false)}
+                    className="text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg font-medium border border-gray-200 transition-colors text-sm">
+                    ← Back
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        }
+
+        // normal verify mode
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
-            onClick={() => setValidatingCard(null)}>
+            onClick={closeValidation}>
             <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4"
               onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">Verify match</h3>
-                <button onClick={() => setValidatingCard(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+                <button onClick={closeValidation} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
               </div>
               <p className="text-sm text-gray-600">
                 <strong>{card.productName}</strong> — {card.setName} #{card.number} · {card.rarity}
@@ -336,31 +445,25 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                 </div>
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide">Stock image</p>
-                  {(() => {
-                    const stockUrl = catalogImages.get(card.number) || card.photoUrl
-                    return stockUrl
-                      ? <img src={stockUrl} alt="stock"
-                          className="w-full rounded-xl border-2 border-gray-200 object-contain max-h-80" />
-                      : <div className="w-full aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 text-sm text-center px-4">
-                          No stock image — load catalog above
-                        </div>
-                  })()}
+                  {stockUrl
+                    ? <img src={stockUrl} alt="stock"
+                        className="w-full rounded-xl border-2 border-gray-200 object-contain max-h-80" />
+                    : <div className="w-full aspect-[2/3] bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 text-sm text-center px-4">
+                        No stock image — load catalog above
+                      </div>
+                  }
                 </div>
               </div>
               <div className="flex justify-between pt-1">
                 <button
-                  onClick={() => {
-                    if (frontImg) {
-                      setImages(prev => prev.map(img => img.id === frontImg.id ? { ...img, assignedTo: null } : img))
-                    }
-                    setValidatingCard(null)
-                  }}
-                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-5 py-2 rounded-lg font-medium transition-colors"
+                  onClick={() => setReassignMode(true)}
+                  disabled={!frontImg}
+                  className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-5 py-2 rounded-lg font-medium transition-colors disabled:opacity-40"
                 >
                   Wrong card — reassign
                 </button>
                 <button
-                  onClick={() => setValidatingCard(null)}
+                  onClick={closeValidation}
                   className="bg-green-600 hover:bg-green-700 text-white px-8 py-2 rounded-lg font-medium transition-colors"
                 >
                   Looks correct ✓
@@ -416,10 +519,13 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
           >
             {catalogLoading ? '⟳ Loading…' : 'Load'}
           </button>
-          {catalogLoaded && (
+          {catalogLoaded && !catalogError && (
             <span className="text-[11px] text-green-700 font-medium bg-green-50 px-2 py-1 rounded-full border border-green-200">
               {catalogImages.size} images · {catalogLoaded.toUpperCase()}
             </span>
+          )}
+          {catalogError && (
+            <span className="text-[11px] text-red-600 font-medium" title={catalogError}>Error loading</span>
           )}
         </div>
       </div>
@@ -608,7 +714,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                       if (selectedImg) {
                         assign(selectedImg.id, card.tcgplayerId, selectedImg.side)
                       } else if (frontImg) {
-                        setValidatingCard(card)
+                        openValidation(card)
                       }
                     }}
                     className={`flex items-center gap-3 px-3 py-2 rounded-xl border transition-all

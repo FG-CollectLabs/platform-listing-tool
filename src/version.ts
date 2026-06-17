@@ -1,4 +1,4 @@
-export const VERSION = '1.4.0'
+export const VERSION = '1.4.1'
 
 export interface Release {
   version: string
@@ -8,10 +8,18 @@ export interface Release {
 
 export const CHANGELOG: Release[] = [
   {
+    version: '1.4.1',
+    date: '2026-06-15',
+    notes: [
+      'Step 3: stock images now loaded from Scryfall (fixes CORS issue with previous market-tracker approach)',
+      'Step 3: "Wrong card — reassign" now opens an inline search instead of just unassigning; pick the correct card to swap the scan; cards that already have a scan show a warning',
+    ],
+  },
+  {
     version: '1.4.0',
     date: '2026-06-15',
     notes: [
-      'Step 3: catalog loader — enter a set code (e.g. tmc) to pull Scryfall images from market tracker; used in side-by-side validation modal',
+      'Step 3: catalog loader — enter a set code (e.g. tmc) to pull stock images; used in side-by-side validation modal',
       'Step 3: matching tiebreaker — when NM and NM Foil rows share the same card number, non-foil is preferred so photos match the correct row',
     ],
   },
