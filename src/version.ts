@@ -1,4 +1,4 @@
-export const VERSION = '1.3.1'
+export const VERSION = '1.4.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,14 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.4.0',
+    date: '2026-06-15',
+    notes: [
+      'Step 3: catalog loader — enter a set code (e.g. tmc) to pull Scryfall images from market tracker; used in side-by-side validation modal',
+      'Step 3: matching tiebreaker — when NM and NM Foil rows share the same card number, non-foil is preferred so photos match the correct row',
+    ],
+  },
   {
     version: '1.3.1',
     date: '2026-06-14',
