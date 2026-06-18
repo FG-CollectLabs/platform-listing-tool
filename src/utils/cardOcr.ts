@@ -14,10 +14,13 @@ export interface CardOcrResult {
 }
 
 // MTG card regions (relative fractions of card dimensions)
-// Name bar: skip top bleed, crop before mana cost on the right
-const NAME_REGION    = { x: 0.03, y: 0.06, w: 0.75, h: 0.09 }
-// Bottom collector line: card number, set code, copyright line
-const BOTTOM_REGION  = { x: 0.02, y: 0.925, w: 0.96, h: 0.065 }
+// Name bar: skip top bleed, crop before mana cost on the right.
+// Pulled in slightly from the left edge to avoid black border bleed
+// causing Tesseract to read a phantom "f" / "l" before the name.
+const NAME_REGION    = { x: 0.06, y: 0.06, w: 0.72, h: 0.09 }
+// Bottom info line: rarity letter + collector number + set code + language.
+// Modern MTG cards have this around y=87-92%; the last 6-7% is copyright only.
+const BOTTOM_REGION  = { x: 0.04, y: 0.87, w: 0.92, h: 0.05 }
 
 let _worker: Worker | null = null
 

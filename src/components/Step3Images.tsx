@@ -21,6 +21,31 @@ function normalizeBase(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
+// Levenshtein distance + similarity (0-1, higher is closer)
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length
+  if (m === 0) return n
+  if (n === 0) return m
+  const dp = Array.from({ length: n + 1 }, (_, i) => i)
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0]
+    dp[0] = i
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j]
+      dp[j] = a[i - 1] === b[j - 1]
+        ? prev
+        : Math.min(prev, dp[j - 1], dp[j]) + 1
+      prev = tmp
+    }
+  }
+  return dp[n]
+}
+
+function similarity(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length)
+  return maxLen === 0 ? 1 : 1 - levenshtein(a, b) / maxLen
+}
+
 // Score an OCR result against a card
 function scoreOcr(ocr: CardOcrResult, card: TcgCard): { score: number; reason: string } {
   const ocrNum  = ocr.parsedNumber
@@ -35,10 +60,22 @@ function scoreOcr(ocr: CardOcrResult, card: TcgCard): { score: number; reason: s
   if (ocr.parsedName) {
     const normalOcr  = normalizeBase(ocr.parsedName)
     const normalCard = normalizeBase(card.productName)
+
     if (normalOcr === normalCard)
       return { score: 0.88, reason: `exact name OCR "${ocr.parsedName}" → "${card.productName}"` }
+
+    // Fuzzy similarity — handles Tesseract artifacts like a phantom "f" or single missing char
+    const sim = similarity(normalOcr, normalCard)
+    const simPct = Math.round(sim * 100)
+    if (sim >= 0.92)
+      return { score: 0.85, reason: `OCR name "${ocr.parsedName}" → "${card.productName}" (${simPct}% sim)` }
+    if (sim >= 0.82)
+      return { score: 0.75, reason: `OCR name "${ocr.parsedName}" ≈ "${card.productName}" (${simPct}% sim)` }
+    if (sim >= 0.72)
+      return { score: 0.60, reason: `OCR name "${ocr.parsedName}" ~ "${card.productName}" (${simPct}% sim)` }
+
     if (normalCard.length >= 4 && normalOcr.includes(normalCard))
-      return { score: 0.70, reason: `name OCR "${ocr.parsedName}" contains "${card.productName}"` }
+      return { score: 0.70, reason: `OCR name "${ocr.parsedName}" contains "${card.productName}"` }
     if (normalCard.length >= 4 && normalCard.includes(normalOcr) && normalOcr.length >= 4)
       return { score: 0.65, reason: `"${card.productName}" contains OCR text "${ocr.parsedName}"` }
     // Token overlap

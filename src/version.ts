@@ -1,4 +1,4 @@
-export const VERSION = '1.6.1'
+export const VERSION = '1.6.2'
 
 export interface Release {
   version: string
@@ -7,6 +7,15 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.6.2',
+    date: '2026-06-18',
+    notes: [
+      'Step 3 OCR: bottom region moved up (y=87-92% instead of 92.5-99%) — was previously cropping just card edge',
+      'Step 3 OCR: name region pulled in 3% from left to avoid border bleed (e.g. phantom "f" before "Rain-Slicked Copse")',
+      'Step 3 OCR: Levenshtein fuzzy match — close-but-not-exact OCR (≥92% similarity = 85% score, ≥82% = 75%, ≥72% = 60%)',
+    ],
+  },
   {
     version: '1.6.1',
     date: '2026-06-18',
