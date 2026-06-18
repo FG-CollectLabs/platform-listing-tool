@@ -2,7 +2,6 @@ import { useRef, useState, useCallback } from 'react'
 import type { TcgCard } from '../types'
 import { uploadImage } from '../utils/imageApi'
 
-
 interface UploadedImage {
   id: string
   objectUrl: string
@@ -11,13 +10,15 @@ interface UploadedImage {
   assignedTo: string | null
   hostedUrl?: string
   hostedId?: string
+  matchScore?: number
+  matchReason?: string
 }
 
 function normalizeBase(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-function filenameScore(fileName: string, card: TcgCard): number {
+function filenameMatchDetail(fileName: string, card: TcgCard): { score: number; reason: string } {
   const stripped = fileName.toLowerCase()
     .replace(/\.[^.]+$/, '')
     .replace(/[-_](back|b)$/, '')
@@ -26,13 +27,21 @@ function filenameScore(fileName: string, card: TcgCard): number {
   const num = card.number.replace(/\D/g, '')
   const name = normalizeBase(card.productName)
 
-  if (num && (base === num || base === num.padStart(3, '0'))) return 1.0
-  if (base === name) return 0.9
-  if (name.length >= 5 && (base.includes(name) || name.includes(base))) return 0.75
+  if (num && (base === num || base === num.padStart(3, '0')))
+    return { score: 1.0, reason: `card number in filename "${stripped}" → #${card.number}` }
+  if (base === name)
+    return { score: 0.9, reason: `exact name match "${stripped}" → "${card.productName}"` }
+  if (name.length >= 5 && base.includes(name))
+    return { score: 0.75, reason: `filename "${stripped}" contains card name "${card.productName}"` }
+  if (name.length >= 5 && name.includes(base))
+    return { score: 0.75, reason: `card name "${card.productName}" contains filename text "${stripped}"` }
   const tokens = (name.match(/[a-z0-9]{3,}/g) ?? [])
-  const overlap = tokens.filter(t => base.includes(t)).length
-  return overlap >= 2 ? 0.5 : 0
+  const matched = tokens.filter(t => base.includes(t))
+  if (matched.length >= 2)
+    return { score: 0.5, reason: `token overlap: "${matched.join('", "')}" found in filename "${stripped}"` }
+  return { score: 0, reason: 'no match' }
 }
+
 
 function isBackFilename(fileName: string): boolean {
   const s = fileName.toLowerCase().replace(/\.[^.]+$/, '')
@@ -45,18 +54,19 @@ function quickFilenameMatch(imgs: UploadedImage[], cards: TcgCard[]): UploadedIm
   return imgs.map(img => {
     if (img.assignedTo) return img
     const usedSet = img.side === 'front' ? usedFront : usedBack
-    let best: { card: TcgCard; score: number } | null = null
+    let best: { card: TcgCard; score: number; reason: string } | null = null
     for (const card of cards) {
-      const s = filenameScore(img.fileName, card)
+      const detail = filenameMatchDetail(img.fileName, card)
+      const s = detail.score
       const betterScore = !best || s > best.score
       const tiebreakNonFoil = best !== null && s === best.score
         && best.card.condition.toLowerCase().includes('foil')
         && !card.condition.toLowerCase().includes('foil')
-      if (s >= 0.75 && (betterScore || tiebreakNonFoil)) best = { card, score: s }
+      if (s >= 0.75 && (betterScore || tiebreakNonFoil)) best = { card, score: s, reason: detail.reason }
     }
     if (best && !usedSet.has(best.card.tcgplayerId)) {
       usedSet.add(best.card.tcgplayerId)
-      return { ...img, assignedTo: best.card.tcgplayerId }
+      return { ...img, assignedTo: best.card.tcgplayerId, matchScore: best.score, matchReason: best.reason }
     }
     return img
   })
@@ -82,18 +92,20 @@ function applyDefaultSku(cards: TcgCard[], matchedIds: string[], defaultSku: str
 
 export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [images, setImages]         = useState<UploadedImage[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [filter, setFilter]         = useState('')
-  const [scopeSet, setScopeSet]     = useState('all')
-  const [dragging, setDragging]     = useState(false)
-  const [matching, setMatching]     = useState(false)
-  const [matchStats, setMatchStats] = useState<{ byFilename: number } | null>(null)
-  const [uploading, setUploading]   = useState(false)
+  const [images, setImages]           = useState<UploadedImage[]>([])
+  const [selectedId, setSelectedId]   = useState<string | null>(null)
+  const [filter, setFilter]           = useState('')
+  const [scopeSet, setScopeSet]       = useState('all')
+  const [dragging, setDragging]       = useState(false)
+  const [matching, setMatching]       = useState(false)
+  const [matchStats, setMatchStats]   = useState<{ byFilename: number } | null>(null)
+  const [uploading, setUploading]     = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [defaultSku, setDefaultSku] = useState('')
+  const [defaultSku, setDefaultSku]   = useState('')
   const [showUnmatchedOnly, setShowUnmatchedOnly] = useState(false)
+  const [showOrphanedOnly, setShowOrphanedOnly]   = useState(false)
+  const [verifiedIds, setVerifiedIds] = useState<Set<string>>(new Set())
   const [validatingCard, setValidatingCard] = useState<TcgCard | null>(null)
   const [reassignMode, setReassignMode]     = useState(false)
   const [reassignSearch, setReassignSearch] = useState('')
@@ -115,13 +127,26 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     setReassignSearch('')
   }
 
-  function reassignTo(frontImgId: string, newCard: TcgCard) {
+  function markVerified(tcgplayerId: string) {
+    setVerifiedIds(prev => new Set([...prev, tcgplayerId]))
+    closeValidation()
+  }
+
+  function unverify(tcgplayerId: string) {
+    setVerifiedIds(prev => { const s = new Set(prev); s.delete(tcgplayerId); return s })
+  }
+
+  // Reassign front (and optionally back) to a new card, freeing any existing assignment on the target.
+  function reassignTo(frontImgId: string, backImgId: string | null, newCard: TcgCard) {
     setImages(prev => prev.map(img => {
-      // free any existing front already assigned to the target card
-      if (img.assignedTo === newCard.tcgplayerId && img.side === 'front' && img.id !== frontImgId) {
+      if (img.assignedTo === newCard.tcgplayerId && img.side === 'front' && img.id !== frontImgId)
         return { ...img, assignedTo: null }
-      }
-      if (img.id === frontImgId) return { ...img, assignedTo: newCard.tcgplayerId }
+      if (backImgId && img.assignedTo === newCard.tcgplayerId && img.side === 'back' && img.id !== backImgId)
+        return { ...img, assignedTo: null }
+      if (img.id === frontImgId)
+        return { ...img, assignedTo: newCard.tcgplayerId, matchReason: 'manual reassignment', matchScore: 1.0 }
+      if (backImgId && img.id === backImgId)
+        return { ...img, assignedTo: newCard.tcgplayerId, matchReason: 'manual reassignment', matchScore: 1.0 }
       return img
     }))
     closeValidation()
@@ -163,7 +188,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       )
     : scopedCards
   const matchedCardIds = new Set(images.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
-  const displayCards = showUnmatchedOnly ? filteredCards.filter(c => !matchedCardIds.has(c.tcgplayerId)) : filteredCards
+  const displayCards = showUnmatchedOnly
+    ? filteredCards.filter(c => !matchedCardIds.has(c.tcgplayerId))
+    : filteredCards
+
+  const orphanedCount  = images.filter(i => !i.assignedTo).length
+  const displayImages  = showOrphanedOnly ? images.filter(i => !i.assignedTo) : images
 
   function addImageFiles(files: File[]) {
     const newImgs: UploadedImage[] = files
@@ -240,7 +270,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
   function assign(imgId: string, tcgplayerId: string, side: 'front' | 'back') {
     setImages(prev => prev.map(img =>
-      img.id === imgId ? { ...img, assignedTo: tcgplayerId, side } : img
+      img.id === imgId ? { ...img, assignedTo: tcgplayerId, side, matchReason: 'manual', matchScore: 1.0 } : img
     ))
     setSelectedId(null)
     if (defaultSku) {
@@ -268,17 +298,20 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     for (const img of work) {
       if (img.assignedTo) continue
       const usedSet = img.side === 'front' ? usedFront : usedBack
-      let best: { card: TcgCard; score: number } | null = null
+      let best: { card: TcgCard; score: number; reason: string } | null = null
       for (const card of target) {
-        const s = filenameScore(img.fileName, card)
+        const detail = filenameMatchDetail(img.fileName, card)
+        const s = detail.score
         const betterScore = !best || s > best.score
         const tiebreakNonFoil = best !== null && s === best.score
           && best.card.condition.toLowerCase().includes('foil')
           && !card.condition.toLowerCase().includes('foil')
-        if (s >= 0.7 && (betterScore || tiebreakNonFoil)) best = { card, score: s }
+        if (s >= 0.7 && (betterScore || tiebreakNonFoil)) best = { card, score: s, reason: detail.reason }
       }
       if (best && !usedSet.has(best.card.tcgplayerId)) {
         img.assignedTo = best.card.tcgplayerId
+        img.matchScore = best.score
+        img.matchReason = best.reason
         usedSet.add(best.card.tcgplayerId)
         byFilename++
       }
@@ -330,47 +363,63 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     onNext()
   }
 
-  const selectedImg     = selectedId ? images.find(i => i.id === selectedId) : null
-  const matchedFronts   = new Set(images.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
-  const unassignedCount = images.filter(i => !i.assignedTo).length
+  const selectedImg   = selectedId ? images.find(i => i.id === selectedId) : null
+  const matchedFronts = new Set(images.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
 
   return (
     <div className="space-y-5">
-      {/* Validation modal */}
+
+      {/* ── Validation modal ── */}
       {validatingCard && (() => {
         const card = validatingCard
         const frontImg = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
+        const backImg  = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'back')
         const stockUrl = catalogImages.get(card.number) || card.photoUrl
 
-        // reassign mode: search + pick the correct card
+        // ── Reassign mode ──
         if (reassignMode && frontImg) {
           const q = reassignSearch.toLowerCase()
           const candidates = cards.filter(c =>
             c.tcgplayerId !== card.tcgplayerId && (
-              !q ||
-              c.productName.toLowerCase().includes(q) ||
-              c.number.includes(q)
+              !q || c.productName.toLowerCase().includes(q) || c.number.includes(q)
             )
           )
           return (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
               onClick={closeValidation}>
-              <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-6 space-y-4"
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl p-6 space-y-4"
                 onClick={e => e.stopPropagation()}>
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-lg font-semibold text-gray-900">Reassign scan</h3>
-                    <p className="text-xs text-gray-500 mt-0.5">Pick the correct card for this scan</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Pick the correct card — front and back will both move
+                    </p>
                   </div>
                   <button onClick={closeValidation} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
                 </div>
-                <div className="flex gap-4 items-start">
-                  <div className="flex-shrink-0">
-                    <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide mb-1">Your scan</p>
-                    <img src={frontImg.objectUrl} alt="scan"
-                      className="w-28 rounded-xl border-2 border-blue-200 object-contain" />
-                    <p className="text-[10px] text-gray-400 text-center mt-1 truncate max-w-[7rem]">{frontImg.fileName}</p>
+
+                <div className="flex gap-6 items-start">
+                  {/* Your scans — large */}
+                  <div className="flex-shrink-0 space-y-2" style={{ width: '220px' }}>
+                    <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide">Your scan</p>
+                    <img src={frontImg.objectUrl} alt="scan front"
+                      className="w-full rounded-xl border-2 border-blue-200 object-contain" style={{ maxHeight: '340px' }} />
+                    {backImg && (
+                      <img src={backImg.objectUrl} alt="scan back"
+                        className="w-full rounded-xl border-2 border-purple-200 object-contain mt-2" style={{ maxHeight: '340px' }} />
+                    )}
+                    <p className="text-[10px] text-gray-400 text-center truncate">{frontImg.fileName}</p>
+                    {frontImg.matchReason && (
+                      <div className="text-[10px] text-gray-500 bg-gray-50 rounded-lg px-2 py-1.5 border border-gray-200 leading-relaxed">
+                        <span className="font-semibold">How it was matched:</span><br />
+                        {frontImg.matchReason}<br />
+                        <span className="text-gray-400">Confidence: {Math.round((frontImg.matchScore ?? 0) * 100)}%</span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Search + card list */}
                   <div className="flex-1 min-w-0 space-y-2">
                     <input
                       autoFocus
@@ -380,36 +429,37 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                       onChange={e => setReassignSearch(e.target.value)}
                       className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
                     />
-                    <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
-                      {candidates.slice(0, 50).map(c => {
+                    <div className="space-y-1 overflow-y-auto pr-1" style={{ maxHeight: '420px' }}>
+                      {candidates.slice(0, 80).map(c => {
                         const hasExistingFront = images.some(i => i.assignedTo === c.tcgplayerId && i.side === 'front')
                         const cStockUrl = catalogImages.get(c.number)
                         return (
                           <div
                             key={c.tcgplayerId}
-                            onClick={() => reassignTo(frontImg.id, c)}
+                            onClick={() => reassignTo(frontImg.id, backImg?.id ?? null, c)}
                             className="flex items-center gap-3 px-3 py-2 rounded-xl border border-gray-100 hover:border-blue-300 hover:bg-blue-50 cursor-pointer transition-colors"
                           >
                             {cStockUrl
-                              ? <img src={cStockUrl} alt="" className="w-8 h-10 object-cover rounded flex-shrink-0" />
-                              : <div className="w-8 h-10 bg-gray-100 rounded flex-shrink-0" />
+                              ? <img src={cStockUrl} alt="" className="w-10 h-[3.125rem] object-cover rounded flex-shrink-0 border border-gray-200" />
+                              : <div className="w-10 h-[3.125rem] bg-gray-100 rounded flex-shrink-0" />
                             }
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-gray-900 truncate">{c.productName}</p>
-                              <p className="text-xs text-gray-400">#{c.number} · {c.condition}</p>
+                              <p className="text-xs text-gray-400">#{c.number} · {c.rarity} · {c.condition}</p>
                             </div>
                             {hasExistingFront && (
-                              <span className="text-[10px] text-orange-500 font-medium flex-shrink-0">has scan</span>
+                              <span className="text-[10px] text-orange-500 font-medium flex-shrink-0 bg-orange-50 px-1.5 py-0.5 rounded">has scan</span>
                             )}
                           </div>
                         )
                       })}
                       {candidates.length === 0 && (
-                        <p className="text-sm text-gray-400 text-center py-4">No cards match</p>
+                        <p className="text-sm text-gray-400 text-center py-8">No cards match</p>
                       )}
                     </div>
                   </div>
                 </div>
+
                 <div className="flex justify-start pt-1">
                   <button onClick={() => setReassignMode(false)}
                     className="text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg font-medium border border-gray-200 transition-colors text-sm">
@@ -421,7 +471,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
           )
         }
 
-        // normal verify mode
+        // ── Verify mode ──
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
             onClick={closeValidation}>
@@ -434,6 +484,18 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
               <p className="text-sm text-gray-600">
                 <strong>{card.productName}</strong> — {card.setName} #{card.number} · {card.rarity}
               </p>
+
+              {/* Match explanation */}
+              {frontImg && (
+                <div className="text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 space-y-0.5">
+                  <p className="font-semibold text-blue-700">
+                    How this was matched{frontImg.matchScore !== undefined ? ` · ${Math.round(frontImg.matchScore * 100)}% confidence` : ''}
+                  </p>
+                  <p className="text-blue-600">{frontImg.matchReason ?? 'Manual assignment'}</p>
+                  <p className="text-blue-400 mt-0.5">Note: matching is filename-based only — no image OCR is performed</p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-gray-500 text-center uppercase tracking-wide">Your scan</p>
@@ -454,6 +516,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                   }
                 </div>
               </div>
+
               <div className="flex justify-between pt-1">
                 <button
                   onClick={() => setReassignMode(true)}
@@ -463,7 +526,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                   Wrong card — reassign
                 </button>
                 <button
-                  onClick={closeValidation}
+                  onClick={() => markVerified(card.tcgplayerId)}
                   className="bg-green-600 hover:bg-green-700 text-white px-8 py-2 rounded-lg font-medium transition-colors"
                 >
                   Looks correct ✓
@@ -501,7 +564,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
         <div className="flex-shrink-0">
           <p className="text-xs font-semibold text-gray-700">Stock image catalog</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Load Scryfall images from market tracker for side-by-side validation</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Loads Scryfall images by set code for side-by-side validation</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
           <input
@@ -555,9 +618,9 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
             <span className="bg-green-100 text-green-800 px-2.5 py-1 rounded-full font-medium">
               {matchedFronts.size} cards matched
             </span>
-            {unassignedCount > 0 && (
+            {orphanedCount > 0 && (
               <span className="bg-yellow-100 text-yellow-800 px-2.5 py-1 rounded-full font-medium">
-                {unassignedCount} photos unmatched
+                {orphanedCount} photos unassigned
               </span>
             )}
           </div>
@@ -595,7 +658,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                 </button>
               )
             })()}
-
             <button
               onClick={handleAutoMatch}
               disabled={matching}
@@ -621,18 +683,26 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       {/* Main matcher */}
       {images.length > 0 && (
         <div className="grid gap-5" style={{ gridTemplateColumns: '2fr 3fr' }}>
+
           {/* Left: image tray */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
               <span className="text-xs font-medium text-gray-600">Photos ({images.length})</span>
+              <button
+                onClick={() => setShowOrphanedOnly(v => !v)}
+                className={`text-xs px-2 py-0.5 rounded-full font-medium transition-colors flex-shrink-0
+                  ${showOrphanedOnly ? 'bg-yellow-100 text-yellow-700 ring-1 ring-yellow-300' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+              >
+                {showOrphanedOnly ? `Orphaned (${orphanedCount})` : 'Orphaned only'}
+              </button>
               {selectedImg && (
-                <span className="text-xs text-blue-600 font-medium truncate max-w-[160px]">
-                  "{selectedImg.fileName}" selected
+                <span className="text-xs text-blue-600 font-medium truncate max-w-[120px] ml-auto">
+                  "{selectedImg.fileName}"
                 </span>
               )}
             </div>
             <div className="grid grid-cols-2 gap-2.5 max-h-[540px] overflow-y-auto pr-1">
-              {images.map(img => {
+              {displayImages.map(img => {
                 const isSelected = img.id === selectedId
                 const assignedCard = img.assignedTo ? cards.find(c => c.tcgplayerId === img.assignedTo) : null
                 return (
@@ -642,7 +712,9 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                     className={`relative rounded-xl overflow-hidden cursor-pointer border-2 transition-all select-none
                       ${isSelected
                         ? 'border-blue-500 ring-2 ring-blue-200 shadow-lg scale-[1.02]'
-                        : 'border-gray-200 hover:border-blue-300 hover:shadow-md'}`}
+                        : assignedCard
+                          ? 'border-gray-200 hover:border-blue-300 hover:shadow-md'
+                          : 'border-yellow-300 hover:border-yellow-400 hover:shadow-md'}`}
                   >
                     <img src={img.objectUrl} alt={img.fileName} className="w-full aspect-[2/3] object-cover" />
                     <button
@@ -658,11 +730,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                       </div>
                     )}
                     <div className={`absolute bottom-0 left-0 right-0 px-2 py-1.5 text-[10px] leading-snug
-                      ${assignedCard ? 'bg-green-800/85 text-white' : 'bg-black/65 text-white/75'}`}>
+                      ${assignedCard ? 'bg-green-800/85 text-white' : 'bg-yellow-900/75 text-white'}`}>
                       <div className="truncate font-medium">
                         {assignedCard ? assignedCard.productName : img.fileName}
                       </div>
                       {assignedCard && <div className="text-white/60">#{assignedCard.number}</div>}
+                      {!assignedCard && <div className="text-yellow-200/80">unassigned</div>}
                     </div>
                   </div>
                 )
@@ -701,11 +774,30 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
             <div className="space-y-1.5 max-h-[500px] overflow-y-auto pr-1">
               {displayCards.map(card => {
-                const frontImg = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
-                const backImg  = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'back')
-                const hasAny   = !!(frontImg || backImg)
-                const isAssigning = !!selectedImg
+                const frontImg  = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
+                const backImg   = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'back')
+                const hasAny    = !!(frontImg || backImg)
+                const isAssigning   = !!selectedImg
                 const isValidatable = !selectedImg && !!frontImg
+                const isVerified    = verifiedIds.has(card.tcgplayerId)
+
+                // Verified — collapsed row
+                if (isVerified && !isAssigning) {
+                  return (
+                    <div key={card.tcgplayerId}
+                      className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-green-100 bg-green-50">
+                      <span className="text-green-500 text-xs font-bold flex-shrink-0">✓</span>
+                      <span className="text-xs font-medium text-gray-600 truncate flex-1">{card.productName}</span>
+                      <span className="text-xs text-gray-400 flex-shrink-0">#{card.number}</span>
+                      <button
+                        onClick={() => unverify(card.tcgplayerId)}
+                        className="text-[10px] text-gray-400 hover:text-blue-600 flex-shrink-0 transition-colors"
+                      >
+                        re-check
+                      </button>
+                    </div>
+                  )
+                }
 
                 return (
                   <div

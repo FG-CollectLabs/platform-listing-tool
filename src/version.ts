@@ -1,4 +1,4 @@
-export const VERSION = '1.4.1'
+export const VERSION = '1.5.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,16 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.5.0',
+    date: '2026-06-18',
+    notes: [
+      'Step 3: verify modal shows match explanation — how the filename was parsed, which rule fired, confidence %',
+      'Step 3: "Wrong card — reassign" opens wider modal with full-size scan; back image also moves with the front',
+      'Step 3: verified cards collapse into a thin row after "Looks correct" — click "re-check" to re-open',
+      'Step 3: "Orphaned only" toggle in photo tray — shows only unassigned images, highlighted in yellow',
+    ],
+  },
   {
     version: '1.4.1',
     date: '2026-06-15',
