@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback } from 'react'
 import type { TcgCard } from '../types'
 import { uploadImage } from '../utils/imageApi'
+import { analyzeCard, initOcrWorker, type CardOcrResult } from '../utils/cardOcr'
 
 interface UploadedImage {
   id: string
@@ -12,10 +13,42 @@ interface UploadedImage {
   hostedId?: string
   matchScore?: number
   matchReason?: string
+  ocr?: CardOcrResult
+  ocrStatus?: 'pending' | 'running' | 'done' | 'error'
 }
 
 function normalizeBase(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+// Score an OCR result against a card
+function scoreOcr(ocr: CardOcrResult, card: TcgCard): { score: number; reason: string } {
+  const ocrNum  = ocr.parsedNumber
+  const cardNum = card.number.replace(/\D/g, '')
+
+  if (ocrNum && cardNum) {
+    if (ocrNum === cardNum || ocrNum === cardNum.replace(/^0+/, '')) {
+      return { score: 0.97, reason: `card number OCR "${ocrNum}" → #${card.number}` }
+    }
+  }
+
+  if (ocr.parsedName) {
+    const normalOcr  = normalizeBase(ocr.parsedName)
+    const normalCard = normalizeBase(card.productName)
+    if (normalOcr === normalCard)
+      return { score: 0.88, reason: `exact name OCR "${ocr.parsedName}" → "${card.productName}"` }
+    if (normalCard.length >= 4 && normalOcr.includes(normalCard))
+      return { score: 0.70, reason: `name OCR "${ocr.parsedName}" contains "${card.productName}"` }
+    if (normalCard.length >= 4 && normalCard.includes(normalOcr) && normalOcr.length >= 4)
+      return { score: 0.65, reason: `"${card.productName}" contains OCR text "${ocr.parsedName}"` }
+    // Token overlap
+    const tokens = (normalCard.match(/[a-z0-9]{3,}/g) ?? [])
+    const matched = tokens.filter(t => normalOcr.includes(t))
+    if (matched.length >= 2)
+      return { score: 0.50, reason: `token overlap: "${matched.join('", "')}" in OCR name "${ocr.parsedName}"` }
+  }
+
+  return { score: 0, reason: 'no OCR match' }
 }
 
 function filenameMatchDetail(fileName: string, card: TcgCard): { score: number; reason: string } {
@@ -114,6 +147,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [catalogError, setCatalogError]     = useState('')
   const [catalogImages, setCatalogImages]   = useState<Map<string, string>>(new Map())
   const [catalogLoaded, setCatalogLoaded]   = useState('')
+  const [ocrRunning, setOcrRunning]         = useState(false)
+  const [ocrProgress, setOcrProgress]       = useState({ done: 0, total: 0 })
 
   function openValidation(card: TcgCard) {
     setValidatingCard(card)
@@ -178,6 +213,73 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       setCatalogError(e instanceof Error ? e.message : 'Unknown error')
     }
     setCatalogLoading(false)
+  }
+
+  async function handleOcrMatch() {
+    // Only process front images — skip already-assigned ones only if they already have OCR
+    const frontImgs = images.filter(i => i.side === 'front' && (!i.ocr || i.ocrStatus === 'error'))
+    if (frontImgs.length === 0) return
+
+    setOcrRunning(true)
+    setOcrProgress({ done: 0, total: frontImgs.length })
+
+    // Warm up the Tesseract worker once before processing
+    await initOcrWorker()
+
+    const target = scopedCards
+    let matched = 0
+
+    for (let idx = 0; idx < frontImgs.length; idx++) {
+      const img = frontImgs[idx]
+
+      // Mark as running
+      setImages(prev => prev.map(x => x.id === img.id ? { ...x, ocrStatus: 'running' } : x))
+
+      let ocr: CardOcrResult | null = null
+      try {
+        ocr = await analyzeCard(img.objectUrl)
+      } catch {
+        setImages(prev => prev.map(x => x.id === img.id ? { ...x, ocrStatus: 'error' } : x))
+        setOcrProgress(p => ({ ...p, done: p.done + 1 }))
+        continue
+      }
+
+      // Find best card match using OCR data
+      let best: { card: TcgCard; score: number; reason: string } | null = null
+      for (const card of target) {
+        const result = scoreOcr(ocr, card)
+        const betterScore = !best || result.score > best.score
+        const tiebreakNonFoil = best !== null && result.score === best.score
+          && best.card.condition.toLowerCase().includes('foil')
+          && !card.condition.toLowerCase().includes('foil')
+        if (result.score >= 0.50 && (betterScore || tiebreakNonFoil))
+          best = { card, score: result.score, reason: result.reason }
+      }
+
+      // Check if the target card's front slot is free
+      const existingFront = images.find(x => x.assignedTo === best?.card.tcgplayerId && x.side === 'front')
+      const canAssign = best && (!existingFront || existingFront.id === img.id)
+
+      setImages(prev => prev.map(x => {
+        if (x.id !== img.id) return x
+        return {
+          ...x,
+          ocr,
+          ocrStatus: 'done',
+          ...(canAssign && best ? {
+            assignedTo: best.card.tcgplayerId,
+            matchScore: best.score,
+            matchReason: best.reason,
+          } : {}),
+        }
+      }))
+
+      if (canAssign && best) matched++
+      setOcrProgress(p => ({ ...p, done: p.done + 1 }))
+    }
+
+    setMatchStats({ byFilename: matched })
+    setOcrRunning(false)
   }
 
   const setNames = Array.from(new Set(cards.map(c => c.setName))).sort()
@@ -485,14 +587,36 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                 <strong>{card.productName}</strong> — {card.setName} #{card.number} · {card.rarity}
               </p>
 
-              {/* Match explanation */}
+              {/* Match explanation + OCR regions */}
               {frontImg && (
-                <div className="text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 space-y-0.5">
-                  <p className="font-semibold text-blue-700">
-                    How this was matched{frontImg.matchScore !== undefined ? ` · ${Math.round(frontImg.matchScore * 100)}% confidence` : ''}
-                  </p>
-                  <p className="text-blue-600">{frontImg.matchReason ?? 'Manual assignment'}</p>
-                  <p className="text-blue-400 mt-0.5">Note: matching is filename-based only — no image OCR is performed</p>
+                <div className="text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 space-y-2">
+                  <div className="space-y-0.5">
+                    <p className="font-semibold text-blue-700">
+                      How this was matched{frontImg.matchScore !== undefined ? ` · ${Math.round(frontImg.matchScore * 100)}% confidence` : ''}
+                    </p>
+                    <p className="text-blue-600">{frontImg.matchReason ?? 'Manual assignment'}</p>
+                  </div>
+                  {frontImg.ocr && (
+                    <div className="grid grid-cols-2 gap-3 pt-1 border-t border-blue-200">
+                      <div>
+                        <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide mb-1">Name region OCR</p>
+                        <img src={frontImg.ocr.nameRegion.dataUrl} alt="name region"
+                          className="w-full rounded border border-blue-200 mb-1" />
+                        <p className="text-blue-700 font-medium">Read: "{frontImg.ocr.parsedName || '—'}"</p>
+                        <p className="text-blue-400 text-[10px] break-all">{frontImg.ocr.nameRegion.rawText}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide mb-1">Bottom region OCR</p>
+                        <img src={frontImg.ocr.bottomRegion.dataUrl} alt="bottom region"
+                          className="w-full rounded border border-blue-200 mb-1" />
+                        <p className="text-blue-700 font-medium">Number: "{frontImg.ocr.parsedNumber || '—'}"</p>
+                        <p className="text-blue-400 text-[10px] break-all">{frontImg.ocr.bottomRegion.rawText}</p>
+                      </div>
+                    </div>
+                  )}
+                  {!frontImg.ocr && (
+                    <p className="text-blue-400">No OCR data — run OCR match to see image regions</p>
+                  )}
                 </div>
               )}
 
@@ -660,10 +784,20 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
             })()}
             <button
               onClick={handleAutoMatch}
-              disabled={matching}
+              disabled={matching || ocrRunning}
+              title="Match by filename (fallback)"
+              className="text-xs bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-600 px-3 py-1.5 rounded-lg font-medium transition-colors"
+            >
+              Filename match
+            </button>
+            <button
+              onClick={handleOcrMatch}
+              disabled={ocrRunning || matching}
               className="text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white px-4 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-2"
             >
-              {matching ? <><span className="inline-block animate-spin">⟳</span> Matching…</> : '⚡ Run auto-match'}
+              {ocrRunning
+                ? <><span className="inline-block animate-spin">⟳</span> OCR {ocrProgress.done}/{ocrProgress.total}</>
+                : '⚡ Run OCR match'}
             </button>
           </div>
         )}
@@ -671,7 +805,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
       {matchStats && (
         <div className="text-xs text-gray-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
-          Auto-match assigned <strong>{matchStats.byFilename}</strong> image{matchStats.byFilename !== 1 ? 's' : ''} by filename.
+          Matched <strong>{matchStats.byFilename}</strong> image{matchStats.byFilename !== 1 ? 's' : ''}.
         </div>
       )}
       {uploadError && (
@@ -724,6 +858,21 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                     >
                       {img.side === 'front' ? 'F' : 'B'}
                     </button>
+                    {img.ocrStatus === 'running' && (
+                      <div className="absolute top-2 right-2 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center shadow">
+                        <span className="text-white text-[9px] font-bold animate-spin inline-block">⟳</span>
+                      </div>
+                    )}
+                    {img.ocrStatus === 'done' && !img.hostedUrl && (
+                      <div className="absolute top-2 right-2 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center shadow" title="OCR done">
+                        <span className="text-white text-[9px] font-bold">T</span>
+                      </div>
+                    )}
+                    {img.ocrStatus === 'error' && (
+                      <div className="absolute top-2 right-2 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center shadow" title="OCR failed">
+                        <span className="text-white text-[9px] font-bold">!</span>
+                      </div>
+                    )}
                     {img.hostedUrl && (
                       <div className="absolute top-2 right-2 w-5 h-5 bg-emerald-600 rounded-full flex items-center justify-center shadow" title={img.hostedUrl}>
                         <span className="text-white text-[9px] font-bold">☁</span>

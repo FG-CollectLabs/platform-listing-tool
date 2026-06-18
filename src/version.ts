@@ -1,4 +1,4 @@
-export const VERSION = '1.5.0'
+export const VERSION = '1.6.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,15 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.6.0',
+    date: '2026-06-18',
+    notes: [
+      'Step 3: OCR matching — "Run OCR match" reads the name bar (top) and collector number (bottom-right) of each card image using Tesseract.js; no filename used',
+      'Step 3: verify modal now shows the cropped name/bottom regions and what OCR read from each',
+      'Step 3: "Filename match" button kept as fallback for images where OCR fails',
+    ],
+  },
   {
     version: '1.5.0',
     date: '2026-06-18',
