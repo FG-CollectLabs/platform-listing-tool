@@ -1,7 +1,8 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import type { TcgCard } from '../types'
 import { uploadImage } from '../utils/imageApi'
 import { analyzeCard, initOcrWorker, type CardOcrResult } from '../utils/cardOcr'
+import { loadCatalogsForSets, type CatalogStore } from '../utils/scryfallSets'
 
 interface UploadedImage {
   id: string
@@ -15,6 +16,7 @@ interface UploadedImage {
   matchReason?: string
   ocr?: CardOcrResult
   ocrStatus?: 'pending' | 'running' | 'done' | 'error'
+  pairKey?: string  // links front+back of the same physical card
 }
 
 function normalizeBase(s: string): string {
@@ -155,13 +157,19 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [validatingCard, setValidatingCard] = useState<TcgCard | null>(null)
   const [reassignMode, setReassignMode]     = useState(false)
   const [reassignSearch, setReassignSearch] = useState('')
-  const [catalogCode, setCatalogCode]       = useState('')
+  const [catalogStore, setCatalogStore]     = useState<CatalogStore>(new Map())
   const [catalogLoading, setCatalogLoading] = useState(false)
-  const [catalogError, setCatalogError]     = useState('')
-  const [catalogImages, setCatalogImages]   = useState<Map<string, string>>(new Map())
-  const [catalogLoaded, setCatalogLoaded]   = useState('')
+  const [catalogStatus, setCatalogStatus]   = useState('')  // human-readable progress
+  const [catalogUnresolved, setCatalogUnresolved] = useState<string[]>([])
   const [ocrRunning, setOcrRunning]         = useState(false)
   const [ocrProgress, setOcrProgress]       = useState({ done: 0, total: 0 })
+  const [pairsMode, setPairsMode]           = useState(true)
+  const [draggedImageId, setDraggedImageId] = useState<string | null>(null)
+
+  // Stock image lookup that respects per-set catalogs
+  function getStockUrl(card: TcgCard): string {
+    return catalogStore.get(card.setName)?.get(card.number) || card.photoUrl || ''
+  }
 
   function openValidation(card: TcgCard) {
     setValidatingCard(card)
@@ -176,8 +184,21 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   }
 
   function markVerified(tcgplayerId: string) {
-    setVerifiedIds(prev => new Set([...prev, tcgplayerId]))
-    closeValidation()
+    const newVerified = new Set([...verifiedIds, tcgplayerId])
+    setVerifiedIds(newVerified)
+    // Auto-advance to the next card that has a front image and hasn't been verified
+    const idx = displayCards.findIndex(c => c.tcgplayerId === tcgplayerId)
+    const next = displayCards.slice(idx + 1).find(c =>
+      !newVerified.has(c.tcgplayerId) &&
+      images.some(i => i.assignedTo === c.tcgplayerId && i.side === 'front')
+    )
+    if (next) {
+      setValidatingCard(next)
+      setReassignMode(false)
+      setReassignSearch('')
+    } else {
+      closeValidation()
+    }
   }
 
   function unverify(tcgplayerId: string) {
@@ -200,33 +221,32 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     closeValidation()
   }
 
-  async function loadCatalog() {
-    const code = catalogCode.trim().toLowerCase()
-    if (!code) return
+  // Auto-load Scryfall catalogs for every unique set in the user's CSV on mount.
+  useEffect(() => {
+    const setNames = Array.from(new Set(cards.map(c => c.setName).filter(Boolean)))
+    if (setNames.length === 0) return
+    let cancelled = false
     setCatalogLoading(true)
-    setCatalogError('')
-    try {
-      const map = new Map<string, string>()
-      let url: string = `https://api.scryfall.com/cards/search?q=set:${code}&unique=prints`
-      while (url) {
-        const res = await fetch(url)
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.details || `Scryfall error ${res.status}`)
-        for (const c of (data.data || [])) {
-          const num: string = c.collector_number
-          const imgUrl: string | undefined =
-            c.image_uris?.normal ?? c.card_faces?.[0]?.image_uris?.normal
-          if (imgUrl && !map.has(num)) map.set(num, imgUrl)
-        }
-        url = data.has_more ? data.next_page : ''
-      }
-      setCatalogImages(map)
-      setCatalogLoaded(code)
-    } catch (e) {
-      setCatalogError(e instanceof Error ? e.message : 'Unknown error')
-    }
-    setCatalogLoading(false)
-  }
+    setCatalogStatus(`Loading ${setNames.length} set${setNames.length !== 1 ? 's' : ''}…`)
+    loadCatalogsForSets(setNames, (done, total, name) => {
+      if (cancelled) return
+      setCatalogStatus(`Loading ${done}/${total} — ${name}`)
+    }).then(({ store, unresolved }) => {
+      if (cancelled) return
+      setCatalogStore(store)
+      setCatalogUnresolved(unresolved)
+      let imageCount = 0
+      for (const m of store.values()) imageCount += m.size
+      setCatalogStatus(`${imageCount} stock images from ${store.size} set${store.size !== 1 ? 's' : ''}`)
+      setCatalogLoading(false)
+    }).catch(() => {
+      if (cancelled) return
+      setCatalogStatus('Catalog load failed')
+      setCatalogLoading(false)
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function handleOcrMatch() {
     // Only process front images — skip already-assigned ones only if they already have OCR
@@ -275,17 +295,23 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       const canAssign = best && (!existingFront || existingFront.id === img.id)
 
       setImages(prev => prev.map(x => {
-        if (x.id !== img.id) return x
-        return {
-          ...x,
-          ocr,
-          ocrStatus: 'done',
-          ...(canAssign && best ? {
-            assignedTo: best.card.tcgplayerId,
-            matchScore: best.score,
-            matchReason: best.reason,
-          } : {}),
+        if (x.id === img.id) {
+          return {
+            ...x,
+            ocr,
+            ocrStatus: 'done',
+            ...(canAssign && best ? {
+              assignedTo: best.card.tcgplayerId,
+              matchScore: best.score,
+              matchReason: best.reason,
+            } : {}),
+          }
         }
+        // Auto-pair the back image (same pairKey) to the same card
+        if (canAssign && best && img.pairKey && x.pairKey === img.pairKey && x.side === 'back' && !x.assignedTo) {
+          return { ...x, assignedTo: best.card.tcgplayerId }
+        }
+        return x
       }))
 
       if (canAssign && best) {
@@ -318,19 +344,28 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const displayImages  = showOrphanedOnly ? images.filter(i => !i.assignedTo) : images
 
   function addImageFiles(files: File[]) {
-    const newImgs: UploadedImage[] = files
-      .filter(f => f.type.startsWith('image/'))
-      .map(f => ({
+    const accepted = files.filter(f => f.type.startsWith('image/'))
+    const batchKey = crypto.randomUUID().slice(0, 8)
+    const newImgs: UploadedImage[] = accepted.map((f, i) => {
+      const filenameBack = isBackFilename(f.name)
+      // Pairs mode: alternate front/back. Filename suffix (-back) still wins if present.
+      const side: 'front' | 'back' = filenameBack
+        ? 'back'
+        : pairsMode
+          ? (i % 2 === 0 ? 'front' : 'back')
+          : 'front'
+      return {
         id: crypto.randomUUID(),
         objectUrl: URL.createObjectURL(f),
         fileName: f.name,
-        side: isBackFilename(f.name) ? 'back' : 'front' as 'front' | 'back',
+        side,
         assignedTo: null,
-      }))
+        pairKey: pairsMode ? `${batchKey}-${Math.floor(i / 2)}` : undefined,
+      }
+    })
     setImages([...images, ...newImgs])
-    // Don't auto-match on drop — scanner filenames (e.g. 054.jpg) are sequential
-    // and don't reflect card collector numbers. User must click "Run OCR match" or
-    // "Filename match" explicitly.
+    // Auto-trigger OCR shortly after drop. The user shouldn't have to click.
+    setTimeout(() => { void handleOcrMatch() }, 50)
   }
 
   function loadFiles(files: FileList) {
@@ -400,6 +435,33 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     setImages(prev => prev.map(img =>
       img.assignedTo === tcgplayerId && img.side === side ? { ...img, assignedTo: null } : img
     ))
+  }
+
+  // Drag-drop: when an image is dropped onto a card row, assign it there.
+  // If the image has a pairKey, the paired back image also moves to that card.
+  function dropImageOnCard(imageId: string, tcgplayerId: string) {
+    const dragged = images.find(i => i.id === imageId)
+    if (!dragged) return
+    setImages(prev => prev.map(img => {
+      // Free any existing image on the target's same side (front/back)
+      if (img.assignedTo === tcgplayerId && img.side === dragged.side && img.id !== imageId)
+        return { ...img, assignedTo: null }
+      // If pair-moving, also free the existing back on the target
+      if (dragged.pairKey && img.assignedTo === tcgplayerId && img.side === 'back' && img.id !== imageId
+          && images.some(o => o.pairKey === dragged.pairKey && o.side === 'back'))
+        return { ...img, assignedTo: null }
+      // Assign the dragged image
+      if (img.id === imageId)
+        return { ...img, assignedTo: tcgplayerId, matchReason: 'manual drag-drop', matchScore: 1.0 }
+      // Auto-pair: the back image with the same pairKey rides along
+      if (dragged.pairKey && img.pairKey === dragged.pairKey && img.id !== imageId)
+        return { ...img, assignedTo: tcgplayerId }
+      return img
+    }))
+    if (defaultSku) {
+      const card = cards.find(c => c.tcgplayerId === tcgplayerId)
+      if (card && !card.sku) onCards(setSku(cards, tcgplayerId, defaultSku))
+    }
   }
 
   async function handleAutoMatch() {
@@ -491,7 +553,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         const card = validatingCard
         const frontImg = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
         const backImg  = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'back')
-        const stockUrl = catalogImages.get(card.number) || card.photoUrl
+        const stockUrl = getStockUrl(card)
 
         // ── Reassign mode ──
         if (reassignMode && frontImg) {
@@ -549,7 +611,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                     <div className="space-y-1 overflow-y-auto pr-1" style={{ maxHeight: '420px' }}>
                       {candidates.slice(0, 80).map(c => {
                         const hasExistingFront = images.some(i => i.assignedTo === c.tcgplayerId && i.side === 'front')
-                        const cStockUrl = catalogImages.get(c.number)
+                        const cStockUrl = getStockUrl(c)
                         return (
                           <div
                             key={c.tcgplayerId}
@@ -699,37 +761,49 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         />
       </div>
 
-      {/* Catalog stock image loader */}
+      {/* Catalog stock image status (auto-loaded from CSV set names) */}
       <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
         <div className="flex-shrink-0">
           <p className="text-xs font-semibold text-gray-700">Stock image catalog</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">Loads Scryfall images by set code for side-by-side validation</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">Auto-loaded from Scryfall for the sets in your CSV</p>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <input
-            type="text"
-            value={catalogCode}
-            onChange={e => setCatalogCode(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') loadCatalog() }}
-            placeholder="Set code, e.g. tmc"
-            className="w-36 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-800 placeholder-gray-300"
-          />
-          <button
-            onClick={loadCatalog}
-            disabled={catalogLoading || !catalogCode.trim()}
-            className="text-xs px-4 py-1.5 rounded-lg font-medium transition-colors bg-blue-600 hover:bg-blue-700 disabled:bg-gray-200 disabled:text-gray-400 text-white"
-          >
-            {catalogLoading ? '⟳ Loading…' : 'Load'}
-          </button>
-          {catalogLoaded && !catalogError && (
-            <span className="text-[11px] text-green-700 font-medium bg-green-50 px-2 py-1 rounded-full border border-green-200">
-              {catalogImages.size} images · {catalogLoaded.toUpperCase()}
+          {catalogLoading && (
+            <span className="text-[11px] text-blue-700 font-medium bg-blue-50 px-2 py-1 rounded-full border border-blue-200">
+              <span className="inline-block animate-spin mr-1">⟳</span>{catalogStatus}
             </span>
           )}
-          {catalogError && (
-            <span className="text-[11px] text-red-600 font-medium" title={catalogError}>Error loading</span>
+          {!catalogLoading && catalogStore.size > 0 && (
+            <span className="text-[11px] text-green-700 font-medium bg-green-50 px-2 py-1 rounded-full border border-green-200">
+              {catalogStatus}
+            </span>
+          )}
+          {!catalogLoading && catalogUnresolved.length > 0 && (
+            <span
+              className="text-[11px] text-orange-600 font-medium bg-orange-50 px-2 py-1 rounded-full border border-orange-200"
+              title={catalogUnresolved.join('\n')}
+            >
+              {catalogUnresolved.length} unresolved
+            </span>
           )}
         </div>
+      </div>
+
+      {/* Pairs mode toggle */}
+      <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+        <div className="flex-shrink-0">
+          <p className="text-xs font-semibold text-gray-700">Scanner pairs (front then back)</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">When enabled, files are treated as alternating front/back and matched together by OCR</p>
+        </div>
+        <label className="ml-auto flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pairsMode}
+            onChange={e => setPairsMode(e.target.checked)}
+            className="w-4 h-4 accent-blue-600"
+          />
+          <span className="text-xs text-gray-700">{pairsMode ? 'On' : 'Off'}</span>
+        </label>
       </div>
 
       {/* Drop zone */}
@@ -862,6 +936,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                 return (
                   <div
                     key={img.id}
+                    draggable
+                    onDragStart={e => {
+                      setDraggedImageId(img.id)
+                      e.dataTransfer.effectAllowed = 'move'
+                    }}
+                    onDragEnd={() => setDraggedImageId(null)}
                     onClick={() => setSelectedId(isSelected ? null : img.id)}
                     className={`relative rounded-xl overflow-hidden cursor-pointer border-2 transition-all select-none
                       ${isSelected
@@ -870,7 +950,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                           ? 'border-gray-200 hover:border-blue-300 hover:shadow-md'
                           : 'border-yellow-300 hover:border-yellow-400 hover:shadow-md'}`}
                   >
-                    <img src={img.objectUrl} alt={img.fileName} className="w-full aspect-[2/3] object-cover" />
+                    <img src={img.objectUrl} alt={img.fileName} className="w-full aspect-[2/3] object-cover pointer-events-none" />
                     <button
                       onClick={e => { e.stopPropagation(); toggleSide(img.id) }}
                       className={`absolute top-2 left-2 text-[11px] font-bold w-7 h-7 rounded-full shadow-md flex items-center justify-center transition-colors
@@ -968,6 +1048,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                   )
                 }
 
+                const isDropTarget = !!draggedImageId
                 return (
                   <div
                     key={card.tcgplayerId}
@@ -978,10 +1059,19 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                         openValidation(card)
                       }
                     }}
+                    onDragOver={e => { if (draggedImageId) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
+                    onDrop={e => {
+                      e.preventDefault()
+                      if (draggedImageId) {
+                        dropImageOnCard(draggedImageId, card.tcgplayerId)
+                        setDraggedImageId(null)
+                      }
+                    }}
                     className={`flex items-center gap-3 px-3 py-2 rounded-xl border transition-all
                       ${hasAny ? 'border-green-200 bg-green-50' : 'border-gray-100 bg-gray-50'}
                       ${isAssigning ? 'cursor-pointer hover:border-blue-400 hover:bg-blue-50 hover:shadow-sm' :
-                        isValidatable ? 'cursor-pointer hover:border-green-300 hover:shadow-sm' : ''}`}
+                        isValidatable ? 'cursor-pointer hover:border-green-300 hover:shadow-sm' : ''}
+                      ${isDropTarget ? 'ring-2 ring-blue-300 ring-offset-1' : ''}`}
                   >
                     <Slot img={frontImg} label="FRONT"
                       highlight={isAssigning && selectedImg?.side === 'front' ? 'blue' : null}

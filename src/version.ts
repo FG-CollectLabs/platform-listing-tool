@@ -1,4 +1,4 @@
-export const VERSION = '1.6.2'
+export const VERSION = '1.7.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,18 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.7.0',
+    date: '2026-06-18',
+    notes: [
+      'Step 3: stock images auto-load from Scryfall for every set in your CSV — no more typing set codes (mixed-set decks like TMNT Commander + TMNT supported)',
+      'Step 3: OCR runs automatically right after files are dropped',
+      'Step 3: "Scanner pairs" toggle (ON by default) — files dropped in sorted order are alternating front/back; OCR matches the front and the back auto-attaches via shared pairKey',
+      'Step 3: drag-and-drop an image from the photo tray onto any card row to assign it; paired back tags along',
+      'Step 3: "Looks correct" now auto-advances to the next unverified card',
+      'Step 3 OCR: improved number extraction — prefers "R 0054" rarity-letter pattern over "0/1" power/toughness bleed',
+    ],
+  },
   {
     version: '1.6.2',
     date: '2026-06-18',

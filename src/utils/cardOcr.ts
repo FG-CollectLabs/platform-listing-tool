@@ -19,8 +19,9 @@ export interface CardOcrResult {
 // causing Tesseract to read a phantom "f" / "l" before the name.
 const NAME_REGION    = { x: 0.06, y: 0.06, w: 0.72, h: 0.09 }
 // Bottom info line: rarity letter + collector number + set code + language.
-// Modern MTG cards have this around y=87-92%; the last 6-7% is copyright only.
-const BOTTOM_REGION  = { x: 0.04, y: 0.87, w: 0.92, h: 0.05 }
+// Modern MTG cards have this around y=88-94%; the top edge (86-88%) often
+// includes the power/toughness box from the rules section above.
+const BOTTOM_REGION  = { x: 0.04, y: 0.88, w: 0.92, h: 0.06 }
 
 let _worker: Worker | null = null
 
@@ -84,21 +85,30 @@ async function cropRegion(
 }
 
 // Pull the collector number from the bottom line text.
-// MTG format examples: "060/240", "★ 060", "C 060", "#060", "0060 ★"
+// MTG format examples: "060/240", "★ 060", "R 0054", "C 060", "#060", "0060 ★"
+// Priority order avoids picking up power/toughness ("0/1") from rules box bleed.
 function extractNumber(text: string): string {
-  // "nnn/NNN" — collector number slash total
-  const slashMatch = text.match(/\b(\d{1,4})\/\d{1,4}/)
-  if (slashMatch) return parseInt(slashMatch[1], 10).toString()
+  // 1. Rarity letter + number ("R 0054", "C 060", "U 32", "M 071", "L 134")
+  // This is the canonical MTG collector number format — highest priority.
+  const rarityMatch = text.match(/\b([CURML])\s+(\d{1,4})\b/i)
+  if (rarityMatch) return parseInt(rarityMatch[2], 10).toString()
 
-  // preceded by ★ ✦ * # or a letter rarity prefix
+  // 2. "nnn/NNN" collector slash total — only if the denominator is plausibly
+  // a set size (>= 30). Power/toughness like "0/1", "2/3" get rejected.
+  const slashMatch = text.match(/\b(\d{1,4})\/(\d{1,4})\b/)
+  if (slashMatch && parseInt(slashMatch[2], 10) >= 30) {
+    return parseInt(slashMatch[1], 10).toString()
+  }
+
+  // 3. Preceded by ★ ✦ * #
   const symbolMatch = text.match(/[★✦*#]\s*(\d{1,4})/)
   if (symbolMatch) return parseInt(symbolMatch[1], 10).toString()
 
-  // rarity letter then number: "C 060", "R 32"
-  const rarityMatch = text.match(/\b[CURM]\s+(\d{1,4})\b/)
-  if (rarityMatch) return parseInt(rarityMatch[1], 10).toString()
+  // 4. Standalone 3-4 digit number (more likely a collector number than a stat)
+  const longBareMatch = text.match(/(?<!\d)(\d{3,4})(?!\d)/)
+  if (longBareMatch) return parseInt(longBareMatch[1], 10).toString()
 
-  // bare number 1-4 digits, not surrounded by more digits
+  // 5. Bare 1-2 digit fallback
   const bareMatch = text.match(/(?<!\d)(\d{1,4})(?!\d)/)
   if (bareMatch) return parseInt(bareMatch[1], 10).toString()
 

@@ -98,7 +98,7 @@ export default function App() {
               className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
               title="View changelog"
             >
-              v1.6.2
+              v1.7.0
             </button>
           </div>
           <div className="flex items-center gap-4">
