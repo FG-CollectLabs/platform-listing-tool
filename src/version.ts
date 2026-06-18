@@ -1,4 +1,4 @@
-export const VERSION = '1.6.0'
+export const VERSION = '1.6.1'
 
 export interface Release {
   version: string
@@ -7,6 +7,14 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.6.1',
+    date: '2026-06-18',
+    notes: [
+      'Step 3: stopped auto-matching on file drop — scanner filenames like 054.jpg were being falsely matched to card #54',
+      'Step 3: added prompt after drop pointing to the OCR match button',
+    ],
+  },
   {
     version: '1.6.0',
     date: '2026-06-18',

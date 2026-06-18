@@ -81,30 +81,6 @@ function isBackFilename(fileName: string): boolean {
   return /[-_](back|b)$/.test(s) || /\(back\)$/.test(s)
 }
 
-function quickFilenameMatch(imgs: UploadedImage[], cards: TcgCard[]): UploadedImage[] {
-  const usedFront = new Set(imgs.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
-  const usedBack  = new Set(imgs.filter(i => i.assignedTo && i.side === 'back').map(i => i.assignedTo!))
-  return imgs.map(img => {
-    if (img.assignedTo) return img
-    const usedSet = img.side === 'front' ? usedFront : usedBack
-    let best: { card: TcgCard; score: number; reason: string } | null = null
-    for (const card of cards) {
-      const detail = filenameMatchDetail(img.fileName, card)
-      const s = detail.score
-      const betterScore = !best || s > best.score
-      const tiebreakNonFoil = best !== null && s === best.score
-        && best.card.condition.toLowerCase().includes('foil')
-        && !card.condition.toLowerCase().includes('foil')
-      if (s >= 0.75 && (betterScore || tiebreakNonFoil)) best = { card, score: s, reason: detail.reason }
-    }
-    if (best && !usedSet.has(best.card.tcgplayerId)) {
-      usedSet.add(best.card.tcgplayerId)
-      return { ...img, assignedTo: best.card.tcgplayerId, matchScore: best.score, matchReason: best.reason }
-    }
-    return img
-  })
-}
-
 interface Props {
   cards: TcgCard[]
   onCards: (cards: TcgCard[]) => void
@@ -228,6 +204,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
     const target = scopedCards
     let matched = 0
+    const newlyMatchedIds: string[] = []
 
     for (let idx = 0; idx < frontImgs.length; idx++) {
       const img = frontImgs[idx]
@@ -274,12 +251,18 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         }
       }))
 
-      if (canAssign && best) matched++
+      if (canAssign && best) {
+        matched++
+        newlyMatchedIds.push(best.card.tcgplayerId)
+      }
       setOcrProgress(p => ({ ...p, done: p.done + 1 }))
     }
 
     setMatchStats({ byFilename: matched })
     setOcrRunning(false)
+    if (defaultSku && newlyMatchedIds.length > 0) {
+      onCards(applyDefaultSku(cards, newlyMatchedIds, defaultSku))
+    }
   }
 
   const setNames = Array.from(new Set(cards.map(c => c.setName))).sort()
@@ -307,15 +290,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         side: isBackFilename(f.name) ? 'back' : 'front' as 'front' | 'back',
         assignedTo: null,
       }))
-    const prevAssigned = new Set(images.filter(i => i.assignedTo).map(i => i.assignedTo!))
-    const matched = quickFilenameMatch([...images, ...newImgs], scopedCards)
-    setImages(matched)
-    if (defaultSku) {
-      const newlyMatchedIds = matched
-        .filter(i => i.assignedTo && !prevAssigned.has(i.assignedTo))
-        .map(i => i.assignedTo!)
-      if (newlyMatchedIds.length > 0) onCards(applyDefaultSku(cards, newlyMatchedIds, defaultSku))
-    }
+    setImages([...images, ...newImgs])
+    // Don't auto-match on drop — scanner filenames (e.g. 054.jpg) are sequential
+    // and don't reflect card collector numbers. User must click "Run OCR match" or
+    // "Filename match" explicitly.
   }
 
   function loadFiles(files: FileList) {
@@ -806,6 +784,11 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       {matchStats && (
         <div className="text-xs text-gray-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
           Matched <strong>{matchStats.byFilename}</strong> image{matchStats.byFilename !== 1 ? 's' : ''}.
+        </div>
+      )}
+      {images.length > 0 && images.every(i => !i.assignedTo && !i.ocr) && (
+        <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+          <strong>Next step:</strong> click <strong>"⚡ Run OCR match"</strong> above to read the card name and collector number from each image. Use "Filename match" only if your filenames are named after card numbers (e.g. <code>060.jpg</code>).
         </div>
       )}
       {uploadError && (
