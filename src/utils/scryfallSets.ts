@@ -29,8 +29,35 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length
+  if (m === 0) return n
+  if (n === 0) return m
+  const dp = Array.from({ length: n + 1 }, (_, i) => i)
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0]
+    dp[0] = i
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j]
+      dp[j] = a[i - 1] === b[j - 1]
+        ? prev
+        : Math.min(prev, dp[j - 1], dp[j]) + 1
+      prev = tmp
+    }
+  }
+  return dp[n]
+}
+
+function similarity(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length)
+  return maxLen === 0 ? 1 : 1 - levenshtein(a, b) / maxLen
+}
+
 // Resolve a TCGPlayer-style set name to a Scryfall set code.
 // Returns null if no good match.
+// Avoids bidirectional substring matching — that was matching
+// "Commander: Teenage Mutant Ninja Turtles" → "Teenage Mutant Ninja Turtles"
+// because the shorter name is contained in the longer one.
 export async function resolveSetCode(setName: string): Promise<string | null> {
   if (!setName) return null
   const sets = await getAllSets()
@@ -40,12 +67,18 @@ export async function resolveSetCode(setName: string): Promise<string | null> {
   const exact = sets.find(s => normalize(s.name) === target)
   if (exact) return exact.code
 
-  // 2. Substring match in either direction (TCGPlayer may add/drop prefixes)
-  const sub = sets.find(s => {
+  // 2. Best fuzzy match using Levenshtein similarity (≥ 0.88 to avoid
+  // wrong-set collisions for sets that share most of their words).
+  let best: { code: string; score: number; name: string } | null = null
+  for (const s of sets) {
     const sn = normalize(s.name)
-    return sn.includes(target) || target.includes(sn)
-  })
-  if (sub) return sub.code
+    if (sn.length < 4) continue
+    const sim = similarity(target, sn)
+    if (sim >= 0.88 && (!best || sim > best.score)) {
+      best = { code: s.code, score: sim, name: s.name }
+    }
+  }
+  if (best) return best.code
 
   return null
 }

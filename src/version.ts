@@ -1,4 +1,4 @@
-export const VERSION = '1.7.0'
+export const VERSION = '1.7.1'
 
 export interface Release {
   version: string
@@ -7,6 +7,15 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.7.1',
+    date: '2026-06-18',
+    notes: [
+      'Step 3: Pairs mode defaults to OFF — folders of front-only scans no longer get every other image mislabeled as a back',
+      'Step 3: fixed OCR closure bug — only the first match was firing because handleOcrMatch saw stale images',
+      'Step 3 catalog: stricter set-name resolution — "Commander: TMNT" no longer falls through to "TMNT" stock images',
+    ],
+  },
   {
     version: '1.7.0',
     date: '2026-06-18',

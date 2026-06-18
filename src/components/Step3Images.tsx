@@ -163,8 +163,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [catalogUnresolved, setCatalogUnresolved] = useState<string[]>([])
   const [ocrRunning, setOcrRunning]         = useState(false)
   const [ocrProgress, setOcrProgress]       = useState({ done: 0, total: 0 })
-  const [pairsMode, setPairsMode]           = useState(true)
+  const [pairsMode, setPairsMode]           = useState(false)
   const [draggedImageId, setDraggedImageId] = useState<string | null>(null)
+  // Ref always reflects the latest images — avoids closure staleness when
+  // handleOcrMatch is queued from an effect/timeout
+  const imagesRef = useRef<UploadedImage[]>(images)
+  imagesRef.current = images
 
   // Stock image lookup that respects per-set catalogs
   function getStockUrl(card: TcgCard): string {
@@ -249,24 +253,29 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   }, [])
 
   async function handleOcrMatch() {
-    // Only process front images — skip already-assigned ones only if they already have OCR
-    const frontImgs = images.filter(i => i.side === 'front' && (!i.ocr || i.ocrStatus === 'error'))
+    // Snapshot via ref so this works correctly when invoked from a useEffect
+    // shortly after setImages — closure-captured `images` would be stale.
+    const snapshot = imagesRef.current
+    const frontImgs = snapshot.filter(i =>
+      i.side === 'front' && (!i.ocr || i.ocrStatus === 'error')
+    )
     if (frontImgs.length === 0) return
 
     setOcrRunning(true)
     setOcrProgress({ done: 0, total: frontImgs.length })
 
-    // Warm up the Tesseract worker once before processing
     await initOcrWorker()
 
     const target = scopedCards
     let matched = 0
     const newlyMatchedIds: string[] = []
+    // Track which target cards have been claimed during THIS run, to avoid
+    // double-matching when React hasn't flushed previous setImages updates yet.
+    const claimedFronts = new Set<string>(
+      snapshot.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!)
+    )
 
-    for (let idx = 0; idx < frontImgs.length; idx++) {
-      const img = frontImgs[idx]
-
-      // Mark as running
+    for (const img of frontImgs) {
       setImages(prev => prev.map(x => x.id === img.id ? { ...x, ocrStatus: 'running' } : x))
 
       let ocr: CardOcrResult | null = null
@@ -290,9 +299,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
           best = { card, score: result.score, reason: result.reason }
       }
 
-      // Check if the target card's front slot is free
-      const existingFront = images.find(x => x.assignedTo === best?.card.tcgplayerId && x.side === 'front')
-      const canAssign = best && (!existingFront || existingFront.id === img.id)
+      const canAssign = !!best && !claimedFronts.has(best.card.tcgplayerId)
+      if (canAssign && best) claimedFronts.add(best.card.tcgplayerId)
 
       setImages(prev => prev.map(x => {
         if (x.id === img.id) {
@@ -327,6 +335,18 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       onCards(applyDefaultSku(cards, newlyMatchedIds, defaultSku))
     }
   }
+
+  // Auto-trigger OCR whenever there are un-processed front images and OCR isn't
+  // already running. This handles the post-drop case correctly even when React
+  // hasn't flushed the setImages update yet.
+  useEffect(() => {
+    if (ocrRunning) return
+    const hasPending = images.some(i =>
+      i.side === 'front' && !i.ocr && i.ocrStatus !== 'error' && i.ocrStatus !== 'running'
+    )
+    if (hasPending) void handleOcrMatch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [images, ocrRunning])
 
   const setNames = Array.from(new Set(cards.map(c => c.setName))).sort()
   const scopedCards = scopeSet === 'all' ? cards : cards.filter(c => c.setName === scopeSet)
@@ -364,8 +384,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       }
     })
     setImages([...images, ...newImgs])
-    // Auto-trigger OCR shortly after drop. The user shouldn't have to click.
-    setTimeout(() => { void handleOcrMatch() }, 50)
+    // OCR is triggered by useEffect below when new un-OCR'd images appear
   }
 
   function loadFiles(files: FileList) {
