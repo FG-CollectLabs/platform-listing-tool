@@ -625,29 +625,34 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     }
   }
 
-  // Multi-select assign: user picked 2+ images, then clicked a card.
-  // Lower file-order image → front, next → back. Extras (3+) are ignored.
+  // Multi-select assign: user picked 2 images (one tagged front, one tagged
+  // back via the F/B badge on the tile). Sides are respected — no ordering
+  // ambiguity. If both are the same side this returns null and the caller
+  // should surface the conflict to the user.
   function assignMultiple(ids: string[], tcgplayerId: string) {
     const all = imagesRef.current
-    const picked = all
-      .filter(i => ids.includes(i.id))
-      .sort((a, b) => all.indexOf(a) - all.indexOf(b))
+    const picked = all.filter(i => ids.includes(i.id))
     if (picked.length === 0) return
 
-    const frontImg = picked[0]
-    const backImg  = picked.length > 1 ? picked[1] : undefined
+    const fronts = picked.filter(i => i.side === 'front')
+    const backs  = picked.filter(i => i.side === 'back')
+
+    // Must be exactly one of each to be unambiguous
+    if (fronts.length !== 1 || backs.length !== 1) return
+    const frontImg = fronts[0]
+    const backImg  = backs[0]
 
     setImages(prev => prev.map(img => {
       if (img.id === frontImg.id) {
         return { ...img, assignedTo: tcgplayerId, side: 'front' as const, matchReason: 'manual', matchScore: 1.0 }
       }
-      if (backImg && img.id === backImg.id) {
+      if (img.id === backImg.id) {
         return { ...img, assignedTo: tcgplayerId, side: 'back' as const, matchReason: 'manual', matchScore: 1.0 }
       }
-      // Free any existing image on the slots we're about to fill
+      // Free any image currently assigned to either slot of the target card
       if (img.assignedTo === tcgplayerId) {
         if (img.side === 'front' && img.id !== frontImg.id) return { ...img, assignedTo: null }
-        if (backImg && img.side === 'back' && img.id !== backImg.id) return { ...img, assignedTo: null }
+        if (img.side === 'back'  && img.id !== backImg.id)  return { ...img, assignedTo: null }
       }
       return img
     }))
@@ -771,6 +776,11 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
   const selectedImgs  = images.filter(i => selectedIds.includes(i.id))
   const selectedImg   = selectedImgs.length === 1 ? selectedImgs[0] : null
+  const selFrontCount = selectedImgs.filter(i => i.side === 'front').length
+  const selBackCount  = selectedImgs.filter(i => i.side === 'back').length
+  // Conflict: two selected but they don't have one F + one B
+  const multiConflict = selectedImgs.length >= 2 &&
+    !(selectedImgs.length === 2 && selFrontCount === 1 && selBackCount === 1)
   const matchedFronts = new Set(images.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
 
   return (
@@ -1203,7 +1213,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
             <div className="grid grid-cols-2 gap-2.5 max-h-[540px] overflow-y-auto pr-1">
               {displayImages.map(img => {
                 const isSelected = selectedIds.includes(img.id)
-                const selectionOrder = isSelected ? selectedIds.indexOf(img.id) + 1 : 0
                 const assignedCard = img.assignedTo ? cards.find(c => c.tcgplayerId === img.assignedTo) : null
                 return (
                   <div
@@ -1232,9 +1241,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                     >
                       {img.side === 'front' ? 'F' : 'B'}
                     </button>
-                    {selectionOrder > 0 && selectedIds.length > 1 && (
-                      <div className="absolute top-2 right-9 w-5 h-5 bg-blue-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow ring-2 ring-white">
-                        {selectionOrder}
+                    {isSelected && selectedIds.length > 1 && (
+                      <div className={`absolute top-2 right-9 w-5 h-5 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow ring-2 ring-white
+                        ${multiConflict ? 'bg-orange-500' : 'bg-blue-500'}`}>
+                        {img.side === 'front' ? 'F' : 'B'}
                       </div>
                     )}
                     {img.ocrStatus === 'running' && (
@@ -1307,11 +1317,20 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                 {pairsMode && ' — the paired image will be assigned as the other side automatically'}.
               </div>
             )}
-            {selectedImgs.length > 1 && (
+            {selectedImgs.length > 1 && !multiConflict && (
               <div className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-1.5 border border-blue-100">
-                Click any card row to assign <strong>{selectedImgs.length} images</strong>.
-                {' '}First (by file order) → front, second → back
-                {selectedImgs.length > 2 ? '; extras ignored' : ''}.
+                Click any card row to assign both — the F-tagged image as front, the B-tagged image as back.
+              </div>
+            )}
+            {multiConflict && selectedImgs.length === 2 && (
+              <div className="text-xs text-orange-700 bg-orange-50 rounded-lg px-3 py-1.5 border border-orange-200">
+                ⚠ Both selected images are tagged as <strong>{selFrontCount === 2 ? 'front' : 'back'}</strong>.
+                {' '}Click the F/B badge on one tile to flip it before assigning.
+              </div>
+            )}
+            {multiConflict && selectedImgs.length > 2 && (
+              <div className="text-xs text-orange-700 bg-orange-50 rounded-lg px-3 py-1.5 border border-orange-200">
+                ⚠ Too many selected ({selectedImgs.length}). Pick exactly 2 — one front, one back.
               </div>
             )}
 
@@ -1347,6 +1366,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                   <div
                     key={card.tcgplayerId}
                     onClick={() => {
+                      if (multiConflict) return  // surface warned above; do nothing
                       if (selectedImgs.length >= 2) {
                         assignMultiple(selectedImgs.map(i => i.id), card.tcgplayerId)
                       } else if (selectedImgs.length === 1) {
@@ -1400,13 +1420,37 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         </div>
       )}
 
-      <div className="flex justify-between pt-1">
+      <div className="flex items-end justify-between pt-1 gap-4">
         <button onClick={onBack} className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg font-medium transition-colors">← Back</button>
-        <div className="flex gap-3">
-          <button onClick={() => { onCards(cards); onNext() }}
-            className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg font-medium border border-gray-300 transition-colors">Skip images</button>
-          <button onClick={applyAndContinue}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">Continue to Export →</button>
+        <div className="flex flex-col items-end gap-1">
+          {(() => {
+            const pendingUpload = images.filter(i => i.assignedTo && !i.hostedUrl).length
+            const blocked = pendingUpload > 0
+            return (
+              <>
+                {blocked && (
+                  <p className="text-xs text-orange-700">
+                    {pendingUpload} assigned image{pendingUpload === 1 ? '' : 's'} not yet uploaded — click "☁ Upload to server" above
+                  </p>
+                )}
+                <div className="flex gap-3">
+                  <button onClick={() => { onCards(cards); onNext() }}
+                    className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded-lg font-medium border border-gray-300 transition-colors">Skip images</button>
+                  <button
+                    onClick={applyAndContinue}
+                    disabled={blocked}
+                    title={blocked ? 'Upload all assigned images to the server before exporting' : ''}
+                    className={`px-6 py-2 rounded-lg font-medium transition-colors
+                      ${blocked
+                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+                  >
+                    Continue to Export →
+                  </button>
+                </div>
+              </>
+            )
+          })()}
         </div>
       </div>
     </div>

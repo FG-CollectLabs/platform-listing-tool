@@ -1,4 +1,4 @@
-export const VERSION = '1.9.4'
+export const VERSION = '1.9.5'
 
 export interface Release {
   version: string
@@ -7,6 +7,15 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.9.5',
+    date: '2026-06-19',
+    notes: [
+      'Step 3 multi-select: now uses the F/B tags on each tile (not file order) to determine which goes where',
+      'Step 3 multi-select: orange warning when both selected images are tagged the same side — flip one via the F/B badge before assigning',
+      'Step 3: "Continue to Export" is now blocked until every assigned image has been uploaded to the server (hostedUrl present)',
+    ],
+  },
   {
     version: '1.9.4',
     date: '2026-06-19',
