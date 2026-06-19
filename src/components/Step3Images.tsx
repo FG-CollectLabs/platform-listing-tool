@@ -583,9 +583,41 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   }
 
   function assign(imgId: string, tcgplayerId: string, side: 'front' | 'back') {
-    setImages(prev => prev.map(img =>
-      img.id === imgId ? { ...img, assignedTo: tcgplayerId, side, matchReason: 'manual', matchScore: 1.0 } : img
-    ))
+    const all = imagesRef.current
+    const target = all.find(i => i.id === imgId)
+    if (!target) return
+
+    // Pairs mode: also assign the paired image as the opposite side.
+    // Look up by pairKey first, fall back to nearest unassigned adjacent.
+    let paired: UploadedImage | undefined
+    if (pairsModeRef.current) {
+      if (target.pairKey) {
+        paired = all.find(i => i.pairKey === target.pairKey && i.id !== imgId)
+      }
+      if (!paired) {
+        const idx = all.findIndex(i => i.id === imgId)
+        if (idx + 1 < all.length && !all[idx + 1].assignedTo) paired = all[idx + 1]
+        else if (idx > 0 && !all[idx - 1].assignedTo) paired = all[idx - 1]
+      }
+    }
+    const pairedSide: 'front' | 'back' = side === 'front' ? 'back' : 'front'
+
+    setImages(prev => prev.map(img => {
+      // The clicked image → primary side
+      if (img.id === imgId) {
+        return { ...img, assignedTo: tcgplayerId, side, matchReason: 'manual', matchScore: 1.0 }
+      }
+      // Its pair → opposite side
+      if (paired && img.id === paired.id) {
+        return { ...img, assignedTo: tcgplayerId, side: pairedSide, matchReason: 'manual pair', matchScore: 1.0 }
+      }
+      // Free anything else currently sitting on either of the two sides for this card
+      if (img.assignedTo === tcgplayerId) {
+        if (img.side === side) return { ...img, assignedTo: null }
+        if (paired && img.side === pairedSide) return { ...img, assignedTo: null }
+      }
+      return img
+    }))
     setSelectedId(null)
     if (defaultSku) {
       const card = cards.find(c => c.tcgplayerId === tcgplayerId)
@@ -1224,7 +1256,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
             {selectedImg && (
               <div className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-1.5 border border-blue-100">
                 Click any card row to assign "{selectedImg.fileName}" as its{' '}
-                <strong>{selectedImg.side === 'front' ? 'front' : 'back'} face</strong>.
+                <strong>{selectedImg.side === 'front' ? 'front' : 'back'} face</strong>
+                {pairsMode && ' — the paired image will be assigned as the other side automatically'}.
               </div>
             )}
 

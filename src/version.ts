@@ -1,4 +1,4 @@
-export const VERSION = '1.9.2'
+export const VERSION = '1.9.3'
 
 export interface Release {
   version: string
@@ -7,6 +7,14 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.9.3',
+    date: '2026-06-19',
+    notes: [
+      'Step 3: manual click-to-assign now respects pairs mode — picking one image and clicking a card assigns both the front AND the paired back at once',
+      'Hint banner updated when an image is selected and pairs mode is on',
+    ],
+  },
   {
     version: '1.9.2',
     date: '2026-06-19',
