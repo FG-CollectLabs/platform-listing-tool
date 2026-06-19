@@ -150,6 +150,15 @@ function isBackFilename(fileName: string): boolean {
   return /[-_](back|b)$/.test(s) || /\(back\)$/.test(s)
 }
 
+// Stable "card identity" from a filename: strips extension and -back suffix.
+// "001.jpg" → "001", "001-back.jpg" → "001", "sol-ring.png" → "sol-ring".
+function fileCardKey(fileName: string): string {
+  return fileName.toLowerCase()
+    .replace(/\.[^.]+$/, '')
+    .replace(/[-_](back|b)$/, '')
+    .replace(/\(back\)$/, '')
+}
+
 interface Props {
   cards: TcgCard[]
   onCards: (cards: TcgCard[]) => void
@@ -449,36 +458,51 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const orphanedCount  = images.filter(i => !i.assignedTo).length
   const displayImages  = showOrphanedOnly ? images.filter(i => !i.assignedTo) : images
 
-  function addImageFiles(files: File[]) {
+  function addImageFiles(entries: { file: File; folder: string }[]) {
     const pairs = pairsModeRef.current
-    const accepted = files.filter(f => f.type.startsWith('image/'))
+    const accepted = entries.filter(e => e.file.type.startsWith('image/'))
     const batchKey = crypto.randomUUID().slice(0, 8)
     // Everything starts as 'front' — OCR will reclassify blank images as
     // 'back' and pair them. Filename suffix (-back) still wins if present
     // so explicit naming overrides detection.
-    const newImgs: UploadedImage[] = accepted.map((f, i) => ({
-      id: crypto.randomUUID(),
-      objectUrl: URL.createObjectURL(f),
-      fileName: f.name,
-      side: isBackFilename(f.name) ? 'back' as const : 'front' as const,
-      assignedTo: null,
-      // pairKey is still useful as a hint for pairing — pairs mode groups
-      // consecutive files. OCR will use it as a first-choice pair target.
-      pairKey: pairs ? `${batchKey}-${Math.floor(i / 2)}` : undefined,
-    }))
+    const newImgs: UploadedImage[] = accepted.map((e, i) => {
+      // pairKey: prefer filename-based pairing (001.jpg + 001-back.jpg →
+      // same key). Fall back to alternating-index when pairs mode is on
+      // and the filenames don't carry a -back suffix.
+      const baseKey = `${e.folder}::${fileCardKey(e.file.name)}`
+      const filenameHasBack = isBackFilename(e.file.name)
+      const pairKey = filenameHasBack
+        ? baseKey
+        : pairs
+          ? (accepted.some(o => o !== e && o.folder === e.folder && fileCardKey(o.file.name) === fileCardKey(e.file.name))
+              ? baseKey  // a sibling with same base name exists in this drop
+              : `${batchKey}-${Math.floor(i / 2)}`)  // fall back to adjacency
+          : undefined
+      return {
+        id: crypto.randomUUID(),
+        objectUrl: URL.createObjectURL(e.file),
+        fileName: e.file.name,
+        side: filenameHasBack ? 'back' as const : 'front' as const,
+        assignedTo: null,
+        pairKey,
+      }
+    })
     setImages([...imagesRef.current, ...newImgs])
     // OCR is triggered by useEffect below when new un-OCR'd images appear
   }
 
   function loadFiles(files: FileList) {
-    addImageFiles(Array.from(files))
+    addImageFiles(Array.from(files).map(f => ({ file: f, folder: '' })))
   }
 
-  async function collectFromEntry(entry: FileSystemEntry): Promise<File[]> {
+  async function collectFromEntry(
+    entry: FileSystemEntry,
+    parentFolder = '',
+  ): Promise<{ file: File; folder: string }[]> {
     if (entry.isFile) {
       return new Promise(resolve => {
         (entry as FileSystemFileEntry).file(
-          f => resolve(f.type.startsWith('image/') ? [f] : []),
+          f => resolve(f.type.startsWith('image/') ? [{ file: f, folder: parentFolder }] : []),
           () => resolve([])
         )
       })
@@ -496,7 +520,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         }
         readBatch()
       })
-      const nested = await Promise.all(allEntries.map(collectFromEntry))
+      const folder = parentFolder ? `${parentFolder}/${entry.name}` : entry.name
+      const nested = await Promise.all(allEntries.map(e => collectFromEntry(e, folder)))
       return nested.flat()
     }
     return []
@@ -508,9 +533,13 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     const hasEntries = items.length > 0 && typeof items[0].webkitGetAsEntry === 'function'
     if (hasEntries) {
       const entries = items.map(i => i.webkitGetAsEntry()).filter(Boolean) as FileSystemEntry[]
-      const files = (await Promise.all(entries.map(collectFromEntry))).flat()
-      files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-      addImageFiles(files)
+      const collected = (await Promise.all(entries.map(en => collectFromEntry(en)))).flat()
+      // Sort within each folder by numeric filename order
+      collected.sort((a, b) => {
+        if (a.folder !== b.folder) return a.folder.localeCompare(b.folder)
+        return a.file.name.localeCompare(b.file.name, undefined, { numeric: true })
+      })
+      addImageFiles(collected)
     } else {
       loadFiles(e.dataTransfer.files)
     }

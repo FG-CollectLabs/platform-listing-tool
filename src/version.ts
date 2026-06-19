@@ -1,4 +1,4 @@
-export const VERSION = '1.8.1'
+export const VERSION = '1.8.2'
 
 export interface Release {
   version: string
@@ -7,6 +7,14 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.8.2',
+    date: '2026-06-18',
+    notes: [
+      'Step 3: pairs by filename — "001.jpg" and "001-back.jpg" are paired together (same card key), regardless of sort order',
+      'Step 3: folder name included in pair key so "001.jpg" in different dropped folders does not cross-pair',
+    ],
+  },
   {
     version: '1.8.1',
     date: '2026-06-18',
