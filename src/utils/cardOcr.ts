@@ -85,9 +85,12 @@ async function cropRegion(
 }
 
 // Parse line 1: "R 0045" → { rarity: 'R', number: '45' }
+// Also handles noise prefix like "EE M 0009" (© misread as EE) by looking
+// anywhere in the text rather than anchoring at the start.
 function parseLine1(text: string): { rarity: string; number: string } {
-  // Skip leading non-letter/digit junk, then [rarity letter] then [number].
-  const both = text.match(/^[^A-Z0-9]*([CURML])[^0-9]*(\d{1,4})/i)
+  // Rarity letter as a standalone word, followed by a number (with optional
+  // junk between them). Word boundary lets us skip any leading noise.
+  const both = text.match(/\b([CURML])\b[^0-9]{0,8}(\d{1,4})/i)
   if (both) return { rarity: both[1].toUpperCase(), number: parseInt(both[2], 10).toString() }
   // Number only (rarity may have OCR'd poorly)
   const num = text.match(/\b(\d{1,4})\b/)

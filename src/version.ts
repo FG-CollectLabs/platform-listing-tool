@@ -1,4 +1,4 @@
-export const VERSION = '1.9.1'
+export const VERSION = '1.9.2'
 
 export interface Release {
   version: string
@@ -7,6 +7,14 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.9.2',
+    date: '2026-06-19',
+    notes: [
+      'Step 3 catalog: commander-aware set resolution — "Commander: TMNT" no longer falls through to the standalone "TMNT" set for stock images',
+      'Step 3 OCR: parseLine1 now finds the rarity letter anywhere in the line, not just at the start. Handles OCR noise like "EE M 0009" (© misread)',
+    ],
+  },
   {
     version: '1.9.1',
     date: '2026-06-19',

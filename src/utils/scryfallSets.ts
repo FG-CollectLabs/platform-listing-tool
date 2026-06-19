@@ -46,24 +46,36 @@ function tokenSimilarity(a: string, b: string): number {
   return intersection / Math.max(ta.size, tb.size)
 }
 
+function hasCommander(s: string): boolean {
+  return /\bcommander\b/i.test(s)
+}
+
 // Resolve a TCGPlayer-style set name to a Scryfall set code.
 // Returns null if no confident match.
 // Uses token-set similarity so word reorders ("Commander: TMNT" vs
 // "TMNT Commander") still match perfectly, but shorter contained names
 // ("TMNT" alone) score lower and lose.
+//
+// Commander-aware filter: if the TCGPlayer name says "Commander", only match
+// Scryfall sets that also have "commander" in their name or set_type. Without
+// this, "Commander: TMNT" would token-match "TMNT" at 0.80 and pick the
+// standalone set's stock images.
 export async function resolveSetCode(setName: string): Promise<string | null> {
   if (!setName) return null
   const sets = await getAllSets()
   const target = normalize(setName)
+  const targetHasCmdr = hasCommander(setName)
 
   // 1. Exact normalized match
   const exact = sets.find(s => normalize(s.name) === target)
   if (exact) return exact.code
 
-  // 2. Best token-set match (≥ 0.75) — prefers same tokens regardless of order
+  // 2. Best token-set match (≥ 0.75), commander-aware
   let best: { code: string; score: number; name: string } | null = null
   for (const s of sets) {
     if (!s.name) continue
+    const setHasCmdr = hasCommander(s.name) || s.set_type === 'commander'
+    if (targetHasCmdr !== setHasCmdr) continue  // commander/non-commander must align
     const sim = tokenSimilarity(setName, s.name)
     if (sim >= 0.75 && (!best || sim > best.score)) {
       best = { code: s.code, score: sim, name: s.name }
