@@ -332,6 +332,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     const claimedFronts = new Set<string>(
       snapshot.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!)
     )
+    // Local pairKey → cardId map: avoids waiting for React to flush state
+    // between async iterations. When a back is processed right after its
+    // front, this gives the back's pair lookup the cardId immediately.
+    const localPairCardIds = new Map<string, string>()
 
     for (const img of toProcess) {
       setImages(prev => prev.map(x => x.id === img.id ? { ...x, ocrStatus: 'running' } : x))
@@ -345,23 +349,34 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         continue
       }
 
-      const hasText = (ocr.parsedName && ocr.parsedName.length >= 3) || !!ocr.parsedNumber
+      // hasText: require a real bottom-line signal (number or rarity), OR a
+      // sufficiently long name with decent confidence. This rejects MTG card
+      // backs where Tesseract may hallucinate 3-4 noise characters from the
+      // brown texture but won't produce a coherent number/rarity/long name.
+      const hasText =
+        !!ocr.parsedNumber ||
+        !!ocr.parsedRarity ||
+        (ocr.parsedName.length >= 5 && ocr.confidence >= 0.5)
 
-      // ── Back classification: OCR found nothing → it's a back face.
-      // Pair it with the previous matched front (via pairKey or adjacency).
+      // ── Back classification: OCR found nothing card-like → it's a back face.
       if (!hasText) {
-        const current = imagesRef.current
         let pairFrontCardId: string | undefined
 
-        // 1. Same pairKey: explicit pair from drop-time
-        if (img.pairKey) {
-          const paired = current.find(x =>
+        // 1. Local pairKey map (most up-to-date — front may have been matched
+        //    in a previous iteration that React hasn't flushed yet)
+        if (img.pairKey && localPairCardIds.has(img.pairKey)) {
+          pairFrontCardId = localPairCardIds.get(img.pairKey)
+        }
+        // 2. Same pairKey in current state
+        if (!pairFrontCardId && img.pairKey) {
+          const paired = imagesRef.current.find(x =>
             x.pairKey === img.pairKey && x.id !== img.id && x.assignedTo
           )
           pairFrontCardId = paired?.assignedTo ?? undefined
         }
-        // 2. Fallback: nearest preceding assigned image (any side)
+        // 3. Fallback: nearest preceding assigned front (by file order)
         if (!pairFrontCardId) {
+          const current = imagesRef.current
           const myIdx = current.findIndex(x => x.id === img.id)
           for (let i = myIdx - 1; i >= 0; i--) {
             if (current[i].assignedTo && current[i].side === 'front') {
@@ -373,7 +388,6 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
 
         setImages(prev => prev.map(x => x.id === img.id ? {
           ...x, ocr, ocrStatus: 'done', side: 'back' as const,
-          // Only auto-pair if the target front isn't already paired with a different back
           ...(pairFrontCardId && !prev.some(o => o.assignedTo === pairFrontCardId && o.side === 'back' && o.id !== img.id)
             ? { assignedTo: pairFrontCardId } : {}),
         } : x))
@@ -395,7 +409,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       }
 
       const canAssign = !!best && !claimedFronts.has(best.card.tcgplayerId)
-      if (canAssign && best) claimedFronts.add(best.card.tcgplayerId)
+      if (canAssign && best) {
+        claimedFronts.add(best.card.tcgplayerId)
+        // Record in local pair map so upcoming back can find this front
+        // without waiting for React to flush the setImages below.
+        if (img.pairKey) localPairCardIds.set(img.pairKey, best.card.tcgplayerId)
+      }
 
       setImages(prev => prev.map(x => {
         if (x.id === img.id) {
@@ -423,6 +442,18 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       }
       setOcrProgress(p => ({ ...p, done: p.done + 1 }))
     }
+
+    // Post-pass: any unassigned backs whose paired front got matched later
+    // in the loop (or whose pair lookup raced React state) now get attached.
+    setImages(prev => prev.map(x => {
+      if (x.side === 'back' && !x.assignedTo && x.pairKey) {
+        const cardId = localPairCardIds.get(x.pairKey)
+        if (cardId && !prev.some(o => o.assignedTo === cardId && o.side === 'back' && o.id !== x.id)) {
+          return { ...x, assignedTo: cardId }
+        }
+      }
+      return x
+    }))
 
     setMatchStats({ byFilename: matched })
     setOcrRunning(false)

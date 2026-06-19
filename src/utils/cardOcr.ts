@@ -17,13 +17,14 @@ export interface CardOcrResult {
 
 // MTG card regions (relative fractions of card dimensions)
 // Name bar: skip top bleed, crop before mana cost on the right.
-// Pulled in slightly from the left edge to avoid black border bleed
-// causing Tesseract to read a phantom "f" / "l" before the name.
 const NAME_REGION    = { x: 0.06, y: 0.06, w: 0.72, h: 0.09 }
-// Bottom info line: rarity letter + collector number + set code + language.
-// Modern MTG cards have this around y=88-94%; the top edge (86-88%) often
-// includes the power/toughness box from the rules section above.
-const BOTTOM_REGION  = { x: 0.04, y: 0.88, w: 0.92, h: 0.06 }
+// Bottom info splits into TWO lines on modern MTG cards:
+//   Line 1: "R 0045"            — rarity letter + collector number
+//   Line 2: "TMC · EN ★ ARTIST" — set code + language + artist
+// Crop them separately so we can parse "first letter / digits / first 3 chars"
+// without the lines bleeding into each other or copyright noise on the right.
+const LINE_1_REGION  = { x: 0.04, y: 0.873, w: 0.46, h: 0.030 }
+const LINE_2_REGION  = { x: 0.04, y: 0.903, w: 0.46, h: 0.030 }
 
 let _worker: Worker | null = null
 
@@ -86,34 +87,25 @@ async function cropRegion(
   })
 }
 
-// Pull the collector number from the bottom line text.
-// MTG format examples: "060/240", "★ 060", "R 0054", "C 060", "#060", "0060 ★"
-// Priority order avoids picking up power/toughness ("0/1") from rules box bleed.
-function extractNumber(text: string): string {
-  // 1. Rarity letter + number ("R 0054", "C 060", "U 32", "M 071", "L 134")
-  // This is the canonical MTG collector number format — highest priority.
-  const rarityMatch = text.match(/\b([CURML])\s+(\d{1,4})\b/i)
-  if (rarityMatch) return parseInt(rarityMatch[2], 10).toString()
+// Parse line 1: "R 0045" → { rarity: 'R', number: '45' }
+function parseLine1(text: string): { rarity: string; number: string } {
+  // Skip leading non-letter/digit junk, then [rarity letter] then [number].
+  const both = text.match(/^[^A-Z0-9]*([CURML])[^0-9]*(\d{1,4})/i)
+  if (both) return { rarity: both[1].toUpperCase(), number: parseInt(both[2], 10).toString() }
+  // Number only (rarity may have OCR'd poorly)
+  const num = text.match(/\b(\d{1,4})\b/)
+  return { rarity: '', number: num ? parseInt(num[1], 10).toString() : '' }
+}
 
-  // 2. "nnn/NNN" collector slash total — only if the denominator is plausibly
-  // a set size (>= 30). Power/toughness like "0/1", "2/3" get rejected.
-  const slashMatch = text.match(/\b(\d{1,4})\/(\d{1,4})\b/)
-  if (slashMatch && parseInt(slashMatch[2], 10) >= 30) {
-    return parseInt(slashMatch[1], 10).toString()
+// Parse line 2: "TMC · EN ★ LORDIGAN" → 'TMC'
+function parseSetCode(text: string): string {
+  // First 3-4 alpha sequence at the start (after optional non-letter junk).
+  // Filter out language codes that might come first if set code OCR'd badly.
+  const SET_IGNORE = new Set(['EN','JA','FR','DE','ES','IT','PT','RU','ZH','KO','TM','WB'])
+  const matches = text.toUpperCase().match(/[A-Z]{3,4}/g) ?? []
+  for (const m of matches) {
+    if (!SET_IGNORE.has(m)) return m
   }
-
-  // 3. Preceded by ★ ✦ * #
-  const symbolMatch = text.match(/[★✦*#]\s*(\d{1,4})/)
-  if (symbolMatch) return parseInt(symbolMatch[1], 10).toString()
-
-  // 4. Standalone 3-4 digit number (more likely a collector number than a stat)
-  const longBareMatch = text.match(/(?<!\d)(\d{3,4})(?!\d)/)
-  if (longBareMatch) return parseInt(longBareMatch[1], 10).toString()
-
-  // 5. Bare 1-2 digit fallback
-  const bareMatch = text.match(/(?<!\d)(\d{1,4})(?!\d)/)
-  if (bareMatch) return parseInt(bareMatch[1], 10).toString()
-
   return ''
 }
 
@@ -122,63 +114,42 @@ function cleanName(text: string): string {
   return text.replace(/[^A-Za-z0-9 ',\-]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-// Extract the single-letter rarity (R/U/C/M/L) that precedes the collector
-// number on modern MTG cards: "R 0054", "C 060", "M 071".
-function extractRarity(text: string): string {
-  const match = text.match(/\b([CURML])\s+\d/i)
-  return match ? match[1].toUpperCase() : ''
-}
-
-// Extract the 3-4 letter set code (e.g. "TMC"). Filters language codes and
-// other false positives ("EN" / "JA" / "WB" / etc).
-const SET_CODE_IGNORE = new Set([
-  'EN','JA','FR','DE','ES','IT','PT','RU','ZH','KO',
-  'AND','THE','FOR','INC','LLC','LTD','EDH','MTG','TM','TCG','WB',
-  'PSA','CGC','BGS','SGC',
-  // Rarity letters alone shouldn't be mistaken for set code
-  'C','U','R','M','L',
-])
-function extractSetCode(text: string): string {
-  const matches = text.match(/\b([A-Z]{2,4})\b/g) ?? []
-  for (const m of matches) {
-    if (m.length < 3) continue
-    if (SET_CODE_IGNORE.has(m)) continue
-    return m
-  }
-  return ''
-}
-
 export async function analyzeCard(objectUrl: string): Promise<CardOcrResult> {
   if (!_worker) await initOcrWorker()
   const worker = _worker!
 
-  const [nameRegionData, bottomRegionData] = await Promise.all([
+  const [nameData, line1Data, line2Data] = await Promise.all([
     cropRegion(objectUrl, NAME_REGION),
-    cropRegion(objectUrl, BOTTOM_REGION),
+    cropRegion(objectUrl, LINE_1_REGION),
+    cropRegion(objectUrl, LINE_2_REGION),
   ])
 
-  const [nameResult, bottomResult] = await Promise.all([
-    worker.recognize(nameRegionData.canvas),
-    worker.recognize(bottomRegionData.canvas),
+  const [nameResult, line1Result, line2Result] = await Promise.all([
+    worker.recognize(nameData.canvas),
+    worker.recognize(line1Data.canvas),
+    worker.recognize(line2Data.canvas),
   ])
 
-  const rawName   = nameResult.data.text.trim()
-  const rawBottom = bottomResult.data.text.trim()
-  const nameConf  = nameResult.data.confidence / 100
-  const botConf   = bottomResult.data.confidence / 100
+  const rawName  = nameResult.data.text.trim()
+  const rawLine1 = line1Result.data.text.trim()
+  const rawLine2 = line2Result.data.text.trim()
+  const nameConf = nameResult.data.confidence / 100
+  const l1Conf   = line1Result.data.confidence / 100
+  const l2Conf   = line2Result.data.confidence / 100
 
   const parsedName    = cleanName(rawName)
-  const parsedNumber  = extractNumber(rawBottom)
-  const parsedRarity  = extractRarity(rawBottom)
-  const parsedSetCode = extractSetCode(rawBottom)
+  const { rarity: parsedRarity, number: parsedNumber } = parseLine1(rawLine1)
+  const parsedSetCode = parseSetCode(rawLine2)
 
   return {
-    nameRegion:   { dataUrl: nameRegionData.dataUrl,   rawText: rawName },
-    bottomRegion: { dataUrl: bottomRegionData.dataUrl, rawText: rawBottom },
+    nameRegion:   { dataUrl: nameData.dataUrl,  rawText: rawName },
+    // bottomRegion shows line 1 by default for the verify modal; raw text
+    // includes both lines so users can see what each row read.
+    bottomRegion: { dataUrl: line1Data.dataUrl, rawText: `${rawLine1}\n${rawLine2}` },
     parsedName,
     parsedNumber,
     parsedRarity,
     parsedSetCode,
-    confidence: (nameConf + botConf) / 2,
+    confidence: (nameConf + l1Conf + l2Conf) / 3,
   }
 }

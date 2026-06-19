@@ -1,4 +1,4 @@
-export const VERSION = '1.8.2'
+export const VERSION = '1.9.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,16 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.9.0',
+    date: '2026-06-19',
+    notes: [
+      'Step 3 OCR: bottom split into two separate line crops — Line 1 (R 0045) parsed as rarity + number, Line 2 (TMC · EN · ARTIST) parsed as set code. No more reading copyright noise',
+      'Step 3: stricter back detection — backs no longer mis-classified as fronts when Tesseract hallucinates 3-char noise from card-back texture',
+      'Step 3: backs now reliably pair to their fronts via in-loop pair map (fixes race where React state batching hid the front\'s match)',
+      'Step 3: post-OCR pass attaches any straggler backs to their matched fronts',
+    ],
+  },
   {
     version: '1.8.2',
     date: '2026-06-18',
