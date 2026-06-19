@@ -1,8 +1,8 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import type { TcgCard } from '../types'
 import { uploadImage } from '../utils/imageApi'
 import { analyzeCard, initOcrWorker, type CardOcrResult } from '../utils/cardOcr'
-import { loadCatalogsForSets, type CatalogStore } from '../utils/scryfallSets'
+import { loadCatalogsForSets, loadSetImages, type CatalogStore } from '../utils/scryfallSets'
 
 interface UploadedImage {
   id: string
@@ -48,14 +48,44 @@ function similarity(a: string, b: string): number {
   return maxLen === 0 ? 1 : 1 - levenshtein(a, b) / maxLen
 }
 
-// Score an OCR result against a card
-function scoreOcr(ocr: CardOcrResult, card: TcgCard): { score: number; reason: string } {
-  const ocrNum  = ocr.parsedNumber
-  const cardNum = card.number.replace(/\D/g, '')
+// Map TCGPlayer rarity strings → single OCR letter
+function rarityLetter(cardRarity: string): string {
+  const r = (cardRarity || '').toLowerCase()
+  if (r.startsWith('mythic')) return 'M'
+  if (r.startsWith('rare')) return 'R'
+  if (r.startsWith('uncommon')) return 'U'
+  if (r.startsWith('common')) return 'C'
+  if (r.startsWith('land')) return 'L'
+  if (r.startsWith('basic land')) return 'L'
+  return ''
+}
+
+// Score an OCR result against a card. Accepts an optional catalogStore so we
+// can compare the OCR'd set code against the card's resolved Scryfall code.
+function scoreOcr(
+  ocr: CardOcrResult,
+  card: TcgCard,
+  catalogStore?: CatalogStore,
+): { score: number; reason: string } {
+  const ocrNum    = ocr.parsedNumber
+  const cardNum   = card.number.replace(/\D/g, '')
+  const ocrRar    = ocr.parsedRarity
+  const ocrSet    = ocr.parsedSetCode
+  const cardRar   = rarityLetter(card.rarity)
+  const cardCode  = catalogStore?.get(card.setName)?.code?.toUpperCase() ?? ''
+
+  // Bonus signals that nudge the score up or down without overriding base match
+  let bonus = 0
+  const bonusReasons: string[] = []
+  if (ocrRar && cardRar && ocrRar === cardRar) { bonus += 0.03; bonusReasons.push(`rarity ${ocrRar}`) }
+  if (ocrRar && cardRar && ocrRar !== cardRar) { bonus -= 0.20; bonusReasons.push(`rarity mismatch ${ocrRar}≠${cardRar}`) }
+  if (ocrSet && cardCode && ocrSet === cardCode) { bonus += 0.05; bonusReasons.push(`set ${ocrSet}`) }
+  if (ocrSet && cardCode && ocrSet !== cardCode) { bonus -= 0.30; bonusReasons.push(`set mismatch ${ocrSet}≠${cardCode}`) }
+  const bonusSuffix = bonusReasons.length ? ` [+${bonusReasons.join(', ')}]` : ''
 
   if (ocrNum && cardNum) {
     if (ocrNum === cardNum || ocrNum === cardNum.replace(/^0+/, '')) {
-      return { score: 0.97, reason: `card number OCR "${ocrNum}" → #${card.number}` }
+      return { score: 0.97 + bonus, reason: `card number OCR "${ocrNum}" → #${card.number}${bonusSuffix}` }
     }
   }
 
@@ -64,27 +94,27 @@ function scoreOcr(ocr: CardOcrResult, card: TcgCard): { score: number; reason: s
     const normalCard = normalizeBase(card.productName)
 
     if (normalOcr === normalCard)
-      return { score: 0.88, reason: `exact name OCR "${ocr.parsedName}" → "${card.productName}"` }
+      return { score: 0.88 + bonus, reason: `exact name OCR "${ocr.parsedName}" → "${card.productName}"${bonusSuffix}` }
 
     // Fuzzy similarity — handles Tesseract artifacts like a phantom "f" or single missing char
     const sim = similarity(normalOcr, normalCard)
     const simPct = Math.round(sim * 100)
     if (sim >= 0.92)
-      return { score: 0.85, reason: `OCR name "${ocr.parsedName}" → "${card.productName}" (${simPct}% sim)` }
+      return { score: 0.85 + bonus, reason: `OCR name "${ocr.parsedName}" → "${card.productName}" (${simPct}% sim)${bonusSuffix}` }
     if (sim >= 0.82)
-      return { score: 0.75, reason: `OCR name "${ocr.parsedName}" ≈ "${card.productName}" (${simPct}% sim)` }
+      return { score: 0.75 + bonus, reason: `OCR name "${ocr.parsedName}" ≈ "${card.productName}" (${simPct}% sim)${bonusSuffix}` }
     if (sim >= 0.72)
-      return { score: 0.60, reason: `OCR name "${ocr.parsedName}" ~ "${card.productName}" (${simPct}% sim)` }
+      return { score: 0.60 + bonus, reason: `OCR name "${ocr.parsedName}" ~ "${card.productName}" (${simPct}% sim)${bonusSuffix}` }
 
     if (normalCard.length >= 4 && normalOcr.includes(normalCard))
-      return { score: 0.70, reason: `OCR name "${ocr.parsedName}" contains "${card.productName}"` }
+      return { score: 0.70 + bonus, reason: `OCR name "${ocr.parsedName}" contains "${card.productName}"${bonusSuffix}` }
     if (normalCard.length >= 4 && normalCard.includes(normalOcr) && normalOcr.length >= 4)
-      return { score: 0.65, reason: `"${card.productName}" contains OCR text "${ocr.parsedName}"` }
+      return { score: 0.65 + bonus, reason: `"${card.productName}" contains OCR text "${ocr.parsedName}"${bonusSuffix}` }
     // Token overlap
-    const tokens = (normalCard.match(/[a-z0-9]{3,}/g) ?? [])
-    const matched = tokens.filter(t => normalOcr.includes(t))
+    const tokenList = (normalCard.match(/[a-z0-9]{3,}/g) ?? [])
+    const matched = tokenList.filter(t => normalOcr.includes(t))
     if (matched.length >= 2)
-      return { score: 0.50, reason: `token overlap: "${matched.join('", "')}" in OCR name "${ocr.parsedName}"` }
+      return { score: 0.50 + bonus, reason: `token overlap: "${matched.join('", "')}" in OCR name "${ocr.parsedName}"${bonusSuffix}` }
   }
 
   return { score: 0, reason: 'no OCR match' }
@@ -163,16 +193,35 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const [catalogUnresolved, setCatalogUnresolved] = useState<string[]>([])
   const [ocrRunning, setOcrRunning]         = useState(false)
   const [ocrProgress, setOcrProgress]       = useState({ done: 0, total: 0 })
-  const [pairsMode, setPairsMode]           = useState(false)
+  const [pairsMode, setPairsMode]           = useState(true)
   const [draggedImageId, setDraggedImageId] = useState<string | null>(null)
-  // Ref always reflects the latest images — avoids closure staleness when
-  // handleOcrMatch is queued from an effect/timeout
+  const [manualCode, setManualCode]         = useState<Record<string, string>>({})  // setName → typed code
+  // Refs always reflect the latest values — avoids closure staleness when
+  // handlers are queued from a useEffect / drop handler.
   const imagesRef = useRef<UploadedImage[]>(images)
   imagesRef.current = images
+  const pairsModeRef = useRef(pairsMode)
+  pairsModeRef.current = pairsMode
 
   // Stock image lookup that respects per-set catalogs
   function getStockUrl(card: TcgCard): string {
-    return catalogStore.get(card.setName)?.get(card.number) || card.photoUrl || ''
+    return catalogStore.get(card.setName)?.images.get(card.number) || card.photoUrl || ''
+  }
+
+  async function loadManualCode(setName: string) {
+    const code = (manualCode[setName] || '').trim().toLowerCase()
+    if (!code) return
+    try {
+      const images = await loadSetImages(code)
+      setCatalogStore(prev => {
+        const next = new Map(prev)
+        next.set(setName, { code, images })
+        return next
+      })
+      setCatalogUnresolved(prev => prev.filter(n => n !== setName))
+    } catch (e) {
+      console.error('Manual catalog load failed:', e)
+    }
   }
 
   function openValidation(card: TcgCard) {
@@ -240,7 +289,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       setCatalogStore(store)
       setCatalogUnresolved(unresolved)
       let imageCount = 0
-      for (const m of store.values()) imageCount += m.size
+      for (const entry of store.values()) imageCount += entry.images.size
       setCatalogStatus(`${imageCount} stock images from ${store.size} set${store.size !== 1 ? 's' : ''}`)
       setCatalogLoading(false)
     }).catch(() => {
@@ -290,7 +339,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       // Find best card match using OCR data
       let best: { card: TcgCard; score: number; reason: string } | null = null
       for (const card of target) {
-        const result = scoreOcr(ocr, card)
+        const result = scoreOcr(ocr, card, catalogStore)
         const betterScore = !best || result.score > best.score
         const tiebreakNonFoil = best !== null && result.score === best.score
           && best.card.condition.toLowerCase().includes('foil')
@@ -364,6 +413,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const displayImages  = showOrphanedOnly ? images.filter(i => !i.assignedTo) : images
 
   function addImageFiles(files: File[]) {
+    // Read from ref so toggling pairs mode after page load takes effect
+    const pairs = pairsModeRef.current
     const accepted = files.filter(f => f.type.startsWith('image/'))
     const batchKey = crypto.randomUUID().slice(0, 8)
     const newImgs: UploadedImage[] = accepted.map((f, i) => {
@@ -371,7 +422,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       // Pairs mode: alternate front/back. Filename suffix (-back) still wins if present.
       const side: 'front' | 'back' = filenameBack
         ? 'back'
-        : pairsMode
+        : pairs
           ? (i % 2 === 0 ? 'front' : 'back')
           : 'front'
       return {
@@ -380,10 +431,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         fileName: f.name,
         side,
         assignedTo: null,
-        pairKey: pairsMode ? `${batchKey}-${Math.floor(i / 2)}` : undefined,
+        pairKey: pairs ? `${batchKey}-${Math.floor(i / 2)}` : undefined,
       }
     })
-    setImages([...images, ...newImgs])
+    setImages([...imagesRef.current, ...newImgs])
     // OCR is triggered by useEffect below when new un-OCR'd images appear
   }
 
@@ -419,7 +470,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     return []
   }
 
-  const onDrop = useCallback(async (e: React.DragEvent) => {
+  async function onDrop(e: React.DragEvent) {
     e.preventDefault(); setDragging(false)
     const items = Array.from(e.dataTransfer.items)
     const hasEntries = items.length > 0 && typeof items[0].webkitGetAsEntry === 'function'
@@ -431,7 +482,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     } else {
       loadFiles(e.dataTransfer.files)
     }
-  }, [images, scopedCards])
+  }
 
   function toggleSide(id: string) {
     setImages(prev => prev.map(img =>
@@ -705,7 +756,11 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                         <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide mb-1">Bottom region OCR</p>
                         <img src={frontImg.ocr.bottomRegion.dataUrl} alt="bottom region"
                           className="w-full rounded border border-blue-200 mb-1" />
-                        <p className="text-blue-700 font-medium">Number: "{frontImg.ocr.parsedNumber || '—'}"</p>
+                        <p className="text-blue-700 font-medium">
+                          #{frontImg.ocr.parsedNumber || '—'}
+                          {frontImg.ocr.parsedRarity ? ` · ${frontImg.ocr.parsedRarity}` : ''}
+                          {frontImg.ocr.parsedSetCode ? ` · ${frontImg.ocr.parsedSetCode}` : ''}
+                        </p>
                         <p className="text-blue-400 text-[10px] break-all">{frontImg.ocr.bottomRegion.rawText}</p>
                       </div>
                     </div>
@@ -807,6 +862,38 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
           )}
         </div>
       </div>
+
+      {/* Manual override for unresolved sets */}
+      {!catalogLoading && catalogUnresolved.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 space-y-2">
+          <p className="text-xs font-semibold text-orange-800">
+            Couldn't auto-resolve {catalogUnresolved.length} set{catalogUnresolved.length !== 1 ? 's' : ''} — enter the Scryfall set code manually
+          </p>
+          <p className="text-[11px] text-orange-600">
+            Find the code at scryfall.com/sets — e.g. "Commander: Teenage Mutant Ninja Turtles" → <code>tmc</code>
+          </p>
+          {catalogUnresolved.map(name => (
+            <div key={name} className="flex items-center gap-2">
+              <span className="text-xs text-gray-700 flex-1 truncate">{name}</span>
+              <input
+                type="text"
+                value={manualCode[name] || ''}
+                onChange={e => setManualCode(prev => ({ ...prev, [name]: e.target.value }))}
+                onKeyDown={e => { if (e.key === 'Enter') void loadManualCode(name) }}
+                placeholder="set code"
+                className="w-24 text-xs border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-orange-400"
+              />
+              <button
+                onClick={() => void loadManualCode(name)}
+                disabled={!(manualCode[name] || '').trim()}
+                className="text-xs px-3 py-1 rounded-lg font-medium bg-orange-600 hover:bg-orange-700 disabled:bg-gray-200 disabled:text-gray-400 text-white"
+              >
+                Load
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Pairs mode toggle */}
       <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">

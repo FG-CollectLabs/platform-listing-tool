@@ -8,9 +8,11 @@ export interface OcrRegion {
 export interface CardOcrResult {
   nameRegion: OcrRegion
   bottomRegion: OcrRegion
-  parsedName: string     // cleaned name text
-  parsedNumber: string   // extracted collector number (digits only)
-  confidence: number     // 0-1
+  parsedName: string      // cleaned name text
+  parsedNumber: string    // extracted collector number (digits only)
+  parsedRarity: string    // R/U/C/M/L from "R 0054"
+  parsedSetCode: string   // 3-4 letter set code like "TMC"
+  confidence: number      // 0-1
 }
 
 // MTG card regions (relative fractions of card dimensions)
@@ -120,6 +122,32 @@ function cleanName(text: string): string {
   return text.replace(/[^A-Za-z0-9 ',\-]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+// Extract the single-letter rarity (R/U/C/M/L) that precedes the collector
+// number on modern MTG cards: "R 0054", "C 060", "M 071".
+function extractRarity(text: string): string {
+  const match = text.match(/\b([CURML])\s+\d/i)
+  return match ? match[1].toUpperCase() : ''
+}
+
+// Extract the 3-4 letter set code (e.g. "TMC"). Filters language codes and
+// other false positives ("EN" / "JA" / "WB" / etc).
+const SET_CODE_IGNORE = new Set([
+  'EN','JA','FR','DE','ES','IT','PT','RU','ZH','KO',
+  'AND','THE','FOR','INC','LLC','LTD','EDH','MTG','TM','TCG','WB',
+  'PSA','CGC','BGS','SGC',
+  // Rarity letters alone shouldn't be mistaken for set code
+  'C','U','R','M','L',
+])
+function extractSetCode(text: string): string {
+  const matches = text.match(/\b([A-Z]{2,4})\b/g) ?? []
+  for (const m of matches) {
+    if (m.length < 3) continue
+    if (SET_CODE_IGNORE.has(m)) continue
+    return m
+  }
+  return ''
+}
+
 export async function analyzeCard(objectUrl: string): Promise<CardOcrResult> {
   if (!_worker) await initOcrWorker()
   const worker = _worker!
@@ -139,14 +167,18 @@ export async function analyzeCard(objectUrl: string): Promise<CardOcrResult> {
   const nameConf  = nameResult.data.confidence / 100
   const botConf   = bottomResult.data.confidence / 100
 
-  const parsedName   = cleanName(rawName)
-  const parsedNumber = extractNumber(rawBottom)
+  const parsedName    = cleanName(rawName)
+  const parsedNumber  = extractNumber(rawBottom)
+  const parsedRarity  = extractRarity(rawBottom)
+  const parsedSetCode = extractSetCode(rawBottom)
 
   return {
     nameRegion:   { dataUrl: nameRegionData.dataUrl,   rawText: rawName },
     bottomRegion: { dataUrl: bottomRegionData.dataUrl, rawText: rawBottom },
     parsedName,
     parsedNumber,
+    parsedRarity,
+    parsedSetCode,
     confidence: (nameConf + botConf) / 2,
   }
 }

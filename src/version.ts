@@ -1,4 +1,4 @@
-export const VERSION = '1.7.1'
+export const VERSION = '1.8.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,17 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.8.0',
+    date: '2026-06-18',
+    notes: [
+      'Step 3 OCR: bottom region now extracts rarity (R/U/C/M/L) and set code (TMC, etc) alongside the number',
+      'Step 3 OCR: matching now boosts when rarity + set match the card (and penalizes when they mismatch)',
+      'Step 3 catalog: token-based set name matching — "Commander: TMNT" now resolves to its actual Scryfall set even if word order differs',
+      'Step 3 catalog: per-set manual code override UI appears for any sets that auto-resolve fails',
+      'Step 3: Pairs mode default ON; pairsMode toggle now actually takes effect after dropping files (was captured stale by useCallback)',
+    ],
+  },
   {
     version: '1.7.1',
     date: '2026-06-18',

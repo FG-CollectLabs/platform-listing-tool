@@ -29,35 +29,28 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '')
 }
 
-function levenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length
-  if (m === 0) return n
-  if (n === 0) return m
-  const dp = Array.from({ length: n + 1 }, (_, i) => i)
-  for (let i = 1; i <= m; i++) {
-    let prev = dp[0]
-    dp[0] = i
-    for (let j = 1; j <= n; j++) {
-      const tmp = dp[j]
-      dp[j] = a[i - 1] === b[j - 1]
-        ? prev
-        : Math.min(prev, dp[j - 1], dp[j]) + 1
-      prev = tmp
-    }
-  }
-  return dp[n]
+function tokens(s: string): string[] {
+  return (s.toLowerCase().match(/[a-z0-9]{2,}/g) ?? [])
+    .filter(t => t.length >= 3) // skip "of", "to", etc but keep "tmc"
 }
 
-function similarity(a: string, b: string): number {
-  const maxLen = Math.max(a.length, b.length)
-  return maxLen === 0 ? 1 : 1 - levenshtein(a, b) / maxLen
+// Symmetric token-set similarity (Jaccard-like).
+function tokenSimilarity(a: string, b: string): number {
+  const ta = new Set(tokens(a))
+  const tb = new Set(tokens(b))
+  if (ta.size === 0 || tb.size === 0) return 0
+  let intersection = 0
+  for (const t of ta) if (tb.has(t)) intersection++
+  // Use min size so that "Commander: TMNT" (5 tokens) matches "TMNT Commander"
+  // (5 tokens) at 1.0, but "Commander: TMNT" vs "TMNT" (4 tokens) at 4/5 = 0.8
+  return intersection / Math.max(ta.size, tb.size)
 }
 
 // Resolve a TCGPlayer-style set name to a Scryfall set code.
-// Returns null if no good match.
-// Avoids bidirectional substring matching — that was matching
-// "Commander: Teenage Mutant Ninja Turtles" → "Teenage Mutant Ninja Turtles"
-// because the shorter name is contained in the longer one.
+// Returns null if no confident match.
+// Uses token-set similarity so word reorders ("Commander: TMNT" vs
+// "TMNT Commander") still match perfectly, but shorter contained names
+// ("TMNT" alone) score lower and lose.
 export async function resolveSetCode(setName: string): Promise<string | null> {
   if (!setName) return null
   const sets = await getAllSets()
@@ -67,14 +60,12 @@ export async function resolveSetCode(setName: string): Promise<string | null> {
   const exact = sets.find(s => normalize(s.name) === target)
   if (exact) return exact.code
 
-  // 2. Best fuzzy match using Levenshtein similarity (≥ 0.88 to avoid
-  // wrong-set collisions for sets that share most of their words).
+  // 2. Best token-set match (≥ 0.75) — prefers same tokens regardless of order
   let best: { code: string; score: number; name: string } | null = null
   for (const s of sets) {
-    const sn = normalize(s.name)
-    if (sn.length < 4) continue
-    const sim = similarity(target, sn)
-    if (sim >= 0.88 && (!best || sim > best.score)) {
+    if (!s.name) continue
+    const sim = tokenSimilarity(setName, s.name)
+    if (sim >= 0.75 && (!best || sim > best.score)) {
       best = { code: s.code, score: sim, name: s.name }
     }
   }
@@ -107,7 +98,11 @@ export async function loadSetImages(code: string): Promise<Map<string, string>> 
   return out
 }
 
-export type CatalogStore = Map<string, Map<string, string>>  // setName → (number → imageUrl)
+export interface CatalogEntry {
+  code: string                     // Scryfall set code (lowercase, e.g. "tmc")
+  images: Map<string, string>      // collector number → image URL
+}
+export type CatalogStore = Map<string, CatalogEntry>  // setName → entry
 
 export async function loadCatalogsForSets(
   setNames: string[],
@@ -123,8 +118,8 @@ export async function loadCatalogsForSets(
       unresolved.push(name)
     } else {
       try {
-        const map = await loadSetImages(code)
-        store.set(name, map)
+        const images = await loadSetImages(code)
+        store.set(name, { code, images })
       } catch {
         unresolved.push(name)
       }
