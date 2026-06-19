@@ -54,7 +54,7 @@ const DEFAULT_STATE: AppState = {
   },
   ebay: {
     titleTemplate: '{name} - {set} #{number} - {foil}{condition_abbr} MTG',
-    conditionDescription: 'Shipped in a penny sleeve and card saver. Combined shipping available — message me for multi-card invoice.',
+    conditionDescription: 'Shipped in a penny sleeve and card saver. Buy multiple — combined shipping discount is applied automatically at checkout.',
     categoryId: '183454',   // Toys & Hobbies > CCG > MTG Individual Cards (current eBay ID)
     listingDuration: 'GTC',
     dispatchTimeMax: 2,
@@ -105,7 +105,7 @@ export default function App() {
               className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
               title="View changelog"
             >
-              v1.10.0
+              v1.10.1
             </button>
           </div>
           <div className="flex items-center gap-4">

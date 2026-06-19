@@ -14,17 +14,19 @@ const CONDITION_ID: Record<string, string> = {
   'Damaged':                '7000',
 }
 
-// eBay-facing condition label for the C:Card Condition item specific
+// eBay-facing C:Card Condition item specific — uses the full descriptive
+// labels eBay expects under the new (post-2025) condition data requirement
+// for category 183454.
 const CONDITION_LABEL: Record<string, string> = {
-  'Near Mint':              'Near Mint or Better',
-  'Near Mint Foil':         'Near Mint or Better',
-  'Lightly Played':         'Lightly Played',
-  'Lightly Played Foil':    'Lightly Played',
-  'Moderately Played':      'Moderately Played',
-  'Moderately Played Foil': 'Moderately Played',
-  'Heavily Played':         'Heavily Played',
-  'Heavily Played Foil':    'Heavily Played',
-  'Damaged':                'Damaged',
+  'Near Mint':              'Near Mint or Better: Comparable to a fresh pack',
+  'Near Mint Foil':         'Near Mint or Better: Comparable to a fresh pack',
+  'Lightly Played':         'Lightly Played (Excellent): Minor border or corner wear, very light scratches',
+  'Lightly Played Foil':    'Lightly Played (Excellent): Minor border or corner wear, very light scratches',
+  'Moderately Played':      'Moderately Played (Very Good): Moderate wear; minor scratches, scuffs, or edge wear',
+  'Moderately Played Foil': 'Moderately Played (Very Good): Moderate wear; minor scratches, scuffs, or edge wear',
+  'Heavily Played':         'Heavily Played (Poor): Major creases, tears, scuffing, scratches, or other wear',
+  'Heavily Played Foil':    'Heavily Played (Poor): Major creases, tears, scuffing, scratches, or other wear',
+  'Damaged':                'Damaged: Significantly damaged; major creases, water damage, or tears',
 }
 
 const CONDITION_ABBR: Record<string, string> = {
@@ -219,7 +221,7 @@ export function generateEbayCsv(
       'Standard',                       // C:Card Size
       'Wizards of the Coast',           // C:Manufacturer
       isFoil(card.condition) ? 'Foil' : 'Non-Foil', // C:Finish
-      'No',                             // C:Graded
+      'Ungraded: Not in original packaging or professionally graded', // C:Graded
       '13+',                            // C:Age Level
       'Individual Card',                // C:Type
       'Does Not Apply',                 // C:Professional Grader

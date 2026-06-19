@@ -1,4 +1,4 @@
-export const VERSION = '1.10.0'
+export const VERSION = '1.10.1'
 
 export interface Release {
   version: string
@@ -7,6 +7,15 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.10.1',
+    date: '2026-06-19',
+    notes: [
+      'eBay CSV: C:Graded uses full eBay-approved label "Ungraded: Not in original packaging or professionally graded"',
+      'eBay CSV: C:Card Condition uses full descriptive label "Near Mint or Better: Comparable to a fresh pack" (and equivalents for LP/MP/HP/DMG)',
+      'Default description updated — combined shipping happens automatically on eBay\'s side once a Combined Shipping Discount is set up in seller hub',
+    ],
+  },
   {
     version: '1.10.0',
     date: '2026-06-19',
