@@ -302,29 +302,29 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   }, [])
 
   async function handleOcrMatch() {
-    // Snapshot via ref so this works correctly when invoked from a useEffect
-    // shortly after setImages — closure-captured `images` would be stale.
+    // Process EVERY un-OCR'd image, regardless of side. OCR tells us which is
+    // a front (has card text) vs a back (blank). This handles both
+    // "all fronts" and "alternating F+B" workflows without relying on the
+    // pairs-mode classification being correct.
     const snapshot = imagesRef.current
-    const frontImgs = snapshot.filter(i =>
-      i.side === 'front' && (!i.ocr || i.ocrStatus === 'error')
+    const toProcess = snapshot.filter(i =>
+      !i.ocr && i.ocrStatus !== 'error' && i.ocrStatus !== 'running'
     )
-    if (frontImgs.length === 0) return
+    if (toProcess.length === 0) return
 
     setOcrRunning(true)
-    setOcrProgress({ done: 0, total: frontImgs.length })
+    setOcrProgress({ done: 0, total: toProcess.length })
 
     await initOcrWorker()
 
     const target = scopedCards
     let matched = 0
     const newlyMatchedIds: string[] = []
-    // Track which target cards have been claimed during THIS run, to avoid
-    // double-matching when React hasn't flushed previous setImages updates yet.
     const claimedFronts = new Set<string>(
       snapshot.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!)
     )
 
-    for (const img of frontImgs) {
+    for (const img of toProcess) {
       setImages(prev => prev.map(x => x.id === img.id ? { ...x, ocrStatus: 'running' } : x))
 
       let ocr: CardOcrResult | null = null
@@ -336,7 +336,44 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         continue
       }
 
-      // Find best card match using OCR data
+      const hasText = (ocr.parsedName && ocr.parsedName.length >= 3) || !!ocr.parsedNumber
+
+      // ── Back classification: OCR found nothing → it's a back face.
+      // Pair it with the previous matched front (via pairKey or adjacency).
+      if (!hasText) {
+        const current = imagesRef.current
+        let pairFrontCardId: string | undefined
+
+        // 1. Same pairKey: explicit pair from drop-time
+        if (img.pairKey) {
+          const paired = current.find(x =>
+            x.pairKey === img.pairKey && x.id !== img.id && x.assignedTo
+          )
+          pairFrontCardId = paired?.assignedTo ?? undefined
+        }
+        // 2. Fallback: nearest preceding assigned image (any side)
+        if (!pairFrontCardId) {
+          const myIdx = current.findIndex(x => x.id === img.id)
+          for (let i = myIdx - 1; i >= 0; i--) {
+            if (current[i].assignedTo && current[i].side === 'front') {
+              pairFrontCardId = current[i].assignedTo!
+              break
+            }
+          }
+        }
+
+        setImages(prev => prev.map(x => x.id === img.id ? {
+          ...x, ocr, ocrStatus: 'done', side: 'back' as const,
+          // Only auto-pair if the target front isn't already paired with a different back
+          ...(pairFrontCardId && !prev.some(o => o.assignedTo === pairFrontCardId && o.side === 'back' && o.id !== img.id)
+            ? { assignedTo: pairFrontCardId } : {}),
+        } : x))
+
+        setOcrProgress(p => ({ ...p, done: p.done + 1 }))
+        continue
+      }
+
+      // ── Front classification: OCR found text → try to match a card
       let best: { card: TcgCard; score: number; reason: string } | null = null
       for (const card of target) {
         const result = scoreOcr(ocr, card, catalogStore)
@@ -344,7 +381,7 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
         const tiebreakNonFoil = best !== null && result.score === best.score
           && best.card.condition.toLowerCase().includes('foil')
           && !card.condition.toLowerCase().includes('foil')
-        if (result.score >= 0.50 && (betterScore || tiebreakNonFoil))
+        if (result.score >= 0.40 && (betterScore || tiebreakNonFoil))
           best = { card, score: result.score, reason: result.reason }
       }
 
@@ -354,9 +391,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       setImages(prev => prev.map(x => {
         if (x.id === img.id) {
           return {
-            ...x,
-            ocr,
-            ocrStatus: 'done',
+            ...x, ocr, ocrStatus: 'done',
+            side: 'front' as const,  // OCR confirmed it's a front
             ...(canAssign && best ? {
               assignedTo: best.card.tcgplayerId,
               matchScore: best.score,
@@ -364,8 +400,9 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
             } : {}),
           }
         }
-        // Auto-pair the back image (same pairKey) to the same card
-        if (canAssign && best && img.pairKey && x.pairKey === img.pairKey && x.side === 'back' && !x.assignedTo) {
+        // If a paired back has already been OCR-classified, attach it now
+        if (canAssign && best && img.pairKey && x.pairKey === img.pairKey
+            && x.side === 'back' && !x.assignedTo) {
           return { ...x, assignedTo: best.card.tcgplayerId }
         }
         return x
@@ -413,27 +450,22 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const displayImages  = showOrphanedOnly ? images.filter(i => !i.assignedTo) : images
 
   function addImageFiles(files: File[]) {
-    // Read from ref so toggling pairs mode after page load takes effect
     const pairs = pairsModeRef.current
     const accepted = files.filter(f => f.type.startsWith('image/'))
     const batchKey = crypto.randomUUID().slice(0, 8)
-    const newImgs: UploadedImage[] = accepted.map((f, i) => {
-      const filenameBack = isBackFilename(f.name)
-      // Pairs mode: alternate front/back. Filename suffix (-back) still wins if present.
-      const side: 'front' | 'back' = filenameBack
-        ? 'back'
-        : pairs
-          ? (i % 2 === 0 ? 'front' : 'back')
-          : 'front'
-      return {
-        id: crypto.randomUUID(),
-        objectUrl: URL.createObjectURL(f),
-        fileName: f.name,
-        side,
-        assignedTo: null,
-        pairKey: pairs ? `${batchKey}-${Math.floor(i / 2)}` : undefined,
-      }
-    })
+    // Everything starts as 'front' — OCR will reclassify blank images as
+    // 'back' and pair them. Filename suffix (-back) still wins if present
+    // so explicit naming overrides detection.
+    const newImgs: UploadedImage[] = accepted.map((f, i) => ({
+      id: crypto.randomUUID(),
+      objectUrl: URL.createObjectURL(f),
+      fileName: f.name,
+      side: isBackFilename(f.name) ? 'back' as const : 'front' as const,
+      assignedTo: null,
+      // pairKey is still useful as a hint for pairing — pairs mode groups
+      // consecutive files. OCR will use it as a first-choice pair target.
+      pairKey: pairs ? `${batchKey}-${Math.floor(i / 2)}` : undefined,
+    }))
     setImages([...imagesRef.current, ...newImgs])
     // OCR is triggered by useEffect below when new un-OCR'd images appear
   }
@@ -898,8 +930,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       {/* Pairs mode toggle */}
       <div className="flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
         <div className="flex-shrink-0">
-          <p className="text-xs font-semibold text-gray-700">Scanner pairs (front then back)</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">When enabled, files are treated as alternating front/back and matched together by OCR</p>
+          <p className="text-xs font-semibold text-gray-700">Scanner pairs hint</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            OCR auto-detects fronts vs backs from text. This toggle just hints that consecutive files (001/002, 003/004…) are F/B pairs so backs prefer their paired front.
+          </p>
         </div>
         <label className="ml-auto flex items-center gap-2 cursor-pointer">
           <input
@@ -1090,7 +1124,14 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                         {assignedCard ? assignedCard.productName : img.fileName}
                       </div>
                       {assignedCard && <div className="text-white/60">#{assignedCard.number}</div>}
-                      {!assignedCard && <div className="text-yellow-200/80">unassigned</div>}
+                      {!assignedCard && img.ocr && (
+                        <div className="text-yellow-200/80 truncate">
+                          OCR: {img.ocr.parsedName || img.ocr.parsedNumber || '(blank — back?)'}
+                        </div>
+                      )}
+                      {!assignedCard && !img.ocr && img.ocrStatus !== 'running' && (
+                        <div className="text-yellow-200/80">unassigned</div>
+                      )}
                     </div>
                   </div>
                 )

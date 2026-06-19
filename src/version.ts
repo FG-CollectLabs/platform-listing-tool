@@ -1,4 +1,4 @@
-export const VERSION = '1.8.0'
+export const VERSION = '1.8.1'
 
 export interface Release {
   version: string
@@ -7,6 +7,16 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.8.1',
+    date: '2026-06-18',
+    notes: [
+      'Step 3 OCR: now runs on EVERY image, not just fronts. OCR decides side: text found = front (match to card); no text = back (paired with previous front)',
+      'Step 3: works regardless of whether your scanner outputs one-per-card or alternating F+B — no need to predict the workflow',
+      'Step 3: OCR result shown on each unassigned image tile so blank backs are visible at a glance',
+      'Step 3: match threshold lowered to 0.40 so partial OCR reads still match',
+    ],
+  },
   {
     version: '1.8.0',
     date: '2026-06-18',
