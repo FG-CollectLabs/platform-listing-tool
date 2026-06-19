@@ -1,4 +1,4 @@
-export const VERSION = '1.9.3'
+export const VERSION = '1.9.4'
 
 export interface Release {
   version: string
@@ -7,6 +7,13 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.9.4',
+    date: '2026-06-19',
+    notes: [
+      'Step 3: multi-select image tiles — click multiple thumbnails to pick the front AND back at once, then click a card to assign both. Order badge (1, 2) shows which is which',
+    ],
+  },
   {
     version: '1.9.3',
     date: '2026-06-19',

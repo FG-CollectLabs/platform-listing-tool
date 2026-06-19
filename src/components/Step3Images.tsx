@@ -180,7 +180,7 @@ function applyDefaultSku(cards: TcgCard[], matchedIds: string[], defaultSku: str
 export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [images, setImages]           = useState<UploadedImage[]>([])
-  const [selectedId, setSelectedId]   = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [filter, setFilter]           = useState('')
   const [scopeSet, setScopeSet]       = useState('all')
   const [dragging, setDragging]       = useState(false)
@@ -618,7 +618,40 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
       }
       return img
     }))
-    setSelectedId(null)
+    setSelectedIds([])
+    if (defaultSku) {
+      const card = cards.find(c => c.tcgplayerId === tcgplayerId)
+      if (card && !card.sku) onCards(setSku(cards, tcgplayerId, defaultSku))
+    }
+  }
+
+  // Multi-select assign: user picked 2+ images, then clicked a card.
+  // Lower file-order image → front, next → back. Extras (3+) are ignored.
+  function assignMultiple(ids: string[], tcgplayerId: string) {
+    const all = imagesRef.current
+    const picked = all
+      .filter(i => ids.includes(i.id))
+      .sort((a, b) => all.indexOf(a) - all.indexOf(b))
+    if (picked.length === 0) return
+
+    const frontImg = picked[0]
+    const backImg  = picked.length > 1 ? picked[1] : undefined
+
+    setImages(prev => prev.map(img => {
+      if (img.id === frontImg.id) {
+        return { ...img, assignedTo: tcgplayerId, side: 'front' as const, matchReason: 'manual', matchScore: 1.0 }
+      }
+      if (backImg && img.id === backImg.id) {
+        return { ...img, assignedTo: tcgplayerId, side: 'back' as const, matchReason: 'manual', matchScore: 1.0 }
+      }
+      // Free any existing image on the slots we're about to fill
+      if (img.assignedTo === tcgplayerId) {
+        if (img.side === 'front' && img.id !== frontImg.id) return { ...img, assignedTo: null }
+        if (backImg && img.side === 'back' && img.id !== backImg.id) return { ...img, assignedTo: null }
+      }
+      return img
+    }))
+    setSelectedIds([])
     if (defaultSku) {
       const card = cards.find(c => c.tcgplayerId === tcgplayerId)
       if (card && !card.sku) onCards(setSku(cards, tcgplayerId, defaultSku))
@@ -736,7 +769,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     onNext()
   }
 
-  const selectedImg   = selectedId ? images.find(i => i.id === selectedId) : null
+  const selectedImgs  = images.filter(i => selectedIds.includes(i.id))
+  const selectedImg   = selectedImgs.length === 1 ? selectedImgs[0] : null
   const matchedFronts = new Set(images.filter(i => i.assignedTo && i.side === 'front').map(i => i.assignedTo!))
 
   return (
@@ -1155,15 +1189,21 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
               >
                 {showOrphanedOnly ? `Orphaned (${orphanedCount})` : 'Orphaned only'}
               </button>
-              {selectedImg && (
+              {selectedImgs.length === 1 && (
                 <span className="text-xs text-blue-600 font-medium truncate max-w-[120px] ml-auto">
-                  "{selectedImg.fileName}"
+                  "{selectedImgs[0].fileName}"
+                </span>
+              )}
+              {selectedImgs.length > 1 && (
+                <span className="text-xs text-blue-600 font-medium ml-auto">
+                  {selectedImgs.length} selected
                 </span>
               )}
             </div>
             <div className="grid grid-cols-2 gap-2.5 max-h-[540px] overflow-y-auto pr-1">
               {displayImages.map(img => {
-                const isSelected = img.id === selectedId
+                const isSelected = selectedIds.includes(img.id)
+                const selectionOrder = isSelected ? selectedIds.indexOf(img.id) + 1 : 0
                 const assignedCard = img.assignedTo ? cards.find(c => c.tcgplayerId === img.assignedTo) : null
                 return (
                   <div
@@ -1174,7 +1214,9 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                       e.dataTransfer.effectAllowed = 'move'
                     }}
                     onDragEnd={() => setDraggedImageId(null)}
-                    onClick={() => setSelectedId(isSelected ? null : img.id)}
+                    onClick={() => setSelectedIds(prev =>
+                      prev.includes(img.id) ? prev.filter(id => id !== img.id) : [...prev, img.id]
+                    )}
                     className={`relative rounded-xl overflow-hidden cursor-pointer border-2 transition-all select-none
                       ${isSelected
                         ? 'border-blue-500 ring-2 ring-blue-200 shadow-lg scale-[1.02]'
@@ -1190,6 +1232,11 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                     >
                       {img.side === 'front' ? 'F' : 'B'}
                     </button>
+                    {selectionOrder > 0 && selectedIds.length > 1 && (
+                      <div className="absolute top-2 right-9 w-5 h-5 bg-blue-500 text-white rounded-full text-[10px] font-bold flex items-center justify-center shadow ring-2 ring-white">
+                        {selectionOrder}
+                      </div>
+                    )}
                     {img.ocrStatus === 'running' && (
                       <div className="absolute top-2 right-2 w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center shadow">
                         <span className="text-white text-[9px] font-bold animate-spin inline-block">⟳</span>
@@ -1253,11 +1300,18 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
               />
             </div>
 
-            {selectedImg && (
+            {selectedImgs.length === 1 && (
               <div className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-1.5 border border-blue-100">
-                Click any card row to assign "{selectedImg.fileName}" as its{' '}
-                <strong>{selectedImg.side === 'front' ? 'front' : 'back'} face</strong>
+                Click any card row to assign "{selectedImgs[0].fileName}" as its{' '}
+                <strong>{selectedImgs[0].side === 'front' ? 'front' : 'back'} face</strong>
                 {pairsMode && ' — the paired image will be assigned as the other side automatically'}.
+              </div>
+            )}
+            {selectedImgs.length > 1 && (
+              <div className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-1.5 border border-blue-100">
+                Click any card row to assign <strong>{selectedImgs.length} images</strong>.
+                {' '}First (by file order) → front, second → back
+                {selectedImgs.length > 2 ? '; extras ignored' : ''}.
               </div>
             )}
 
@@ -1266,8 +1320,8 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                 const frontImg  = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
                 const backImg   = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'back')
                 const hasAny    = !!(frontImg || backImg)
-                const isAssigning   = !!selectedImg
-                const isValidatable = !selectedImg && !!frontImg
+                const isAssigning   = selectedImgs.length > 0
+                const isValidatable = selectedImgs.length === 0 && !!frontImg
                 const isVerified    = verifiedIds.has(card.tcgplayerId)
 
                 // Verified — collapsed row
@@ -1293,8 +1347,10 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
                   <div
                     key={card.tcgplayerId}
                     onClick={() => {
-                      if (selectedImg) {
-                        assign(selectedImg.id, card.tcgplayerId, selectedImg.side)
+                      if (selectedImgs.length >= 2) {
+                        assignMultiple(selectedImgs.map(i => i.id), card.tcgplayerId)
+                      } else if (selectedImgs.length === 1) {
+                        assign(selectedImgs[0].id, card.tcgplayerId, selectedImgs[0].side)
                       } else if (frontImg) {
                         openValidation(card)
                       }
