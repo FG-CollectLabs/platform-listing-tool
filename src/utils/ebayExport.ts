@@ -57,18 +57,39 @@ function conditionAbbr(condition: string): string {
 
 // Resolve title template tokens.
 // {foil} → "Foil " or ""; {condition_abbr} → NM/LP/MP/HP/DMG
+// If the resulting title exceeds eBay's 80-char limit, progressively
+// shorten the set name (drop "Commander:" prefix, then truncate with …)
+// so the trailing condition + MTG suffix isn't lost to slice().
 function resolveTitle(template: string, card: TcgCard): string {
   const foilTag = isFoil(card.condition) ? 'Foil ' : ''
-  return template
+  const build = (setName: string) => template
     .replace('{name}', card.productName)
-    .replace('{set}', card.setName)
+    .replace('{set}', setName)
     .replace('{number}', card.number)
     .replace('{condition}', card.condition)
     .replace('{condition_abbr}', conditionAbbr(card.condition))
     .replace('{rarity}', card.rarity)
     .replace('{foil}', foilTag)
-    .slice(0, 80)
-    .trim()
+
+  let title = build(card.setName)
+  if (title.length <= 80) return title.trim()
+
+  // Drop "Commander:" / "Universes Beyond:" style prefixes
+  const shortSet = card.setName
+    .replace(/^Commander:\s*/, '')
+    .replace(/^Universes Beyond:\s*/, '')
+  if (shortSet !== card.setName) {
+    title = build(shortSet)
+    if (title.length <= 80) return title.trim()
+  }
+
+  // Still too long — chop the set name until it fits, append …
+  let workingSet = shortSet
+  while (workingSet.length > 4 && build(workingSet + '…').length > 80) {
+    workingSet = workingSet.slice(0, -1).trimEnd()
+  }
+  title = build(workingSet + '…')
+  return title.length <= 80 ? title.trim() : title.slice(0, 80).trim()
 }
 
 function buildDescription(card: TcgCard, conditionDescription: string): string {
@@ -123,6 +144,18 @@ export function generateEbayCsv(
     'Condition ID',
     'Description',
     'Format',
+    'Duration',
+    'Location',
+    'PostalCode',
+    'Country',
+    'ShippingType',
+    'ShippingService-1:Option',
+    'ShippingService-1:Cost',
+    'DispatchTimeMax',
+    'ReturnsAcceptedOption',
+    'ReturnsWithinOption',
+    'RefundOption',
+    'ShippingCostPaidByOption',
     'C:Game',
     'C:Card Name',
     'C:Set',
@@ -164,6 +197,18 @@ export function generateEbayCsv(
       conditionId(card.condition),      // Condition ID
       description,                      // Description
       'FixedPrice',                     // Format
+      settings.listingDuration,         // Duration (e.g. GTC)
+      settings.itemLocation,            // Location
+      settings.postalCode,              // PostalCode
+      settings.country,                 // Country
+      'Flat',                           // ShippingType
+      settings.shippingService,         // ShippingService-1:Option
+      settings.shippingCost.toFixed(2), // ShippingService-1:Cost
+      settings.dispatchTimeMax,         // DispatchTimeMax
+      settings.returnsAccepted ? 'ReturnsAccepted' : 'ReturnsNotAccepted', // ReturnsAcceptedOption
+      settings.returnsAccepted ? `Days_${settings.returnPolicyDays}` : '', // ReturnsWithinOption
+      settings.returnsAccepted ? 'MoneyBack' : '', // RefundOption
+      settings.returnsAccepted ? 'Buyer' : '',     // ShippingCostPaidByOption (buyer pays return shipping)
       'Magic: The Gathering',           // C:Game
       card.productName,                 // C:Card Name
       card.setName,                     // C:Set

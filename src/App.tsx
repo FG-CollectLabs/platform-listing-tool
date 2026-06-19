@@ -15,6 +15,7 @@ const DEFAULT_STATE: AppState = {
     ebayFvfPct: 0.1325,
     transactionFee: 0.30,
     roundTo: 'none',
+    competitiveDiscount: { enabled: true, threshold: 5, amount: 1 },
     tiers: [
       {
         id: 'pwe-small',
@@ -53,8 +54,8 @@ const DEFAULT_STATE: AppState = {
   },
   ebay: {
     titleTemplate: '{name} - {set} #{number} - {foil}{condition_abbr} MTG',
-    conditionDescription: 'Shipped in a penny sleeve and card saver.',
-    categoryId: '2536',
+    conditionDescription: 'Shipped in a penny sleeve and card saver. Combined shipping available — message me for multi-card invoice.',
+    categoryId: '183454',   // Toys & Hobbies > CCG > MTG Individual Cards (current eBay ID)
     listingDuration: 'GTC',
     dispatchTimeMax: 2,
     paymentProfile: '',
@@ -62,6 +63,12 @@ const DEFAULT_STATE: AppState = {
     shippingProfile: '',
     country: 'US',
     currency: 'USD',
+    itemLocation: '',
+    postalCode: '',
+    shippingService: 'USPSFirstClass',
+    shippingCost: 1.50,
+    returnsAccepted: true,
+    returnPolicyDays: 30,
   },
 }
 
@@ -98,7 +105,7 @@ export default function App() {
               className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
               title="View changelog"
             >
-              v1.9.5
+              v1.10.0
             </button>
           </div>
           <div className="flex items-center gap-4">

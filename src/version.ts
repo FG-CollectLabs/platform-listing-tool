@@ -1,4 +1,4 @@
-export const VERSION = '1.9.5'
+export const VERSION = '1.10.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,18 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.10.0',
+    date: '2026-06-19',
+    notes: [
+      'eBay CSV: added Location, PostalCode, ShippingType, ShippingService-1, DispatchTimeMax, Returns columns — fixes "Location missing", "shipping service not specified", "Return policy not specified" warnings',
+      'eBay CSV: default category ID changed 2536 → 183454 (current MTG Individual Cards) — fixes "Invalid category" warning',
+      'eBay CSV: smarter title truncation — drops "Commander:" prefix and shortens set name with … so the trailing condition + MTG is no longer chopped off',
+      'eBay CSV: 3rd photo is now the Scryfall stock image (resolved from catalog) instead of the TCGPlayer CDN URL',
+      'Pricing: new competitive discount rule — by default, $1 off buyer total for cards above $5 (toggleable in Step 2)',
+      'Step 2: new section for Item location, ZIP, Shipping service / cost, Returns accepted / window',
+    ],
+  },
   {
     version: '1.9.5',
     date: '2026-06-19',

@@ -24,13 +24,22 @@ function applyRounding(price: number, roundTo: PricingRules['roundTo']): number 
 }
 
 // Competitor total = what a buyer pays on the reference platform (TCGPlayer) for the same card
-// eBay total      = competitorTotal × (1 + premiumPct)   — match exactly at 0%, add premium for tracked
-// Item price      = max(floor, ebayTotal − chargedShipping)
+// eBay total       = competitorTotal × (1 + premiumPct) − competitive discount (if applicable)
+// Item price       = max(floor, ebayTotal − chargedShipping)
+//
+// Competitive discount: for cards above $threshold, shave $amount off the
+// buyer's total on eBay to remain competitive with TCGPlayer (whose lower
+// fees mean we'd otherwise be priced higher net-of-fees on equivalent
+// listings).
 export function computeItemPrice(card: TcgCard, rules: PricingRules): number {
   const tier = tierForCard(card, rules)
   const market = basePrice(card, rules.priceSource)
   const competitorTotal = market + tier.competitorShipping
-  const ebayTotal = competitorTotal * (1 + tier.premiumPct)
+  let ebayTotal = competitorTotal * (1 + tier.premiumPct)
+  const cd = rules.competitiveDiscount
+  if (cd && cd.enabled && cd.amount > 0 && market > cd.threshold) {
+    ebayTotal -= cd.amount
+  }
   const raw = ebayTotal - tier.chargedShipping
   const floored = Math.max(raw, tier.itemFloorPrice)
   const rounded = applyRounding(floored, rules.roundTo)

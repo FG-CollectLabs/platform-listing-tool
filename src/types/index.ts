@@ -43,6 +43,14 @@ export interface PricingRules {
   ebayFvfPct: number
   transactionFee: number
   roundTo: 'none' | '0.05' | '0.10' | '0.25' | '0.50' | '0.99'
+  // Optional competitive discount: shave $amount off the buyer-total for cards
+  // above $threshold. Used to match TCGPlayer pricing on higher-value cards
+  // where eBay's higher FVF would otherwise make us uncompetitive.
+  competitiveDiscount: {
+    enabled: boolean
+    threshold: number  // market price above which discount applies
+    amount: number     // dollars off buyer total
+  }
 }
 
 export interface EbaySettings {
@@ -56,6 +64,14 @@ export interface EbaySettings {
   shippingProfile: string
   country: string
   currency: string
+  // Inline shipping (when no business policy is configured)
+  itemLocation: string         // "City, ST" or similar; required by eBay
+  postalCode: string           // ZIP code
+  shippingService: string      // eBay shipping service code, e.g. "USPSFirstClass"
+  shippingCost: number         // dollars charged to buyer
+  // Returns
+  returnsAccepted: boolean
+  returnPolicyDays: number     // 14, 30, 60
 }
 
 export interface AppState {

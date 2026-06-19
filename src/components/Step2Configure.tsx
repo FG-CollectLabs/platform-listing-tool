@@ -330,6 +330,49 @@ export default function Step2Configure({ cards, pricing, ebay, onPricing, onEbay
         </div>
       </div>
 
+      {/* Competitive discount */}
+      <div className="bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-3 flex items-center gap-4 flex-wrap">
+        <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+          <input
+            type="checkbox"
+            checked={pricing.competitiveDiscount.enabled}
+            onChange={(e) => onPricing({
+              ...pricing,
+              competitiveDiscount: { ...pricing.competitiveDiscount, enabled: e.target.checked },
+            })}
+            className="w-4 h-4 accent-yellow-600"
+          />
+          <span className="text-sm font-semibold text-gray-700">Competitive discount</span>
+        </label>
+        <span className="text-xs text-gray-500 flex-1 min-w-[12rem]">
+          Shave $X off buyer total for cards above $Y so you stay competitive with TCGPlayer net-of-fees.
+        </span>
+        <div className="flex items-center gap-2 text-xs text-gray-600">
+          <span>$</span>
+          <input
+            type="number" step="0.25" min="0"
+            value={pricing.competitiveDiscount.amount}
+            onChange={(e) => onPricing({
+              ...pricing,
+              competitiveDiscount: { ...pricing.competitiveDiscount, amount: parseFloat(e.target.value) || 0 },
+            })}
+            disabled={!pricing.competitiveDiscount.enabled}
+            className="w-16 border border-gray-300 rounded px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+          />
+          <span>off when market &gt; $</span>
+          <input
+            type="number" step="0.50" min="0"
+            value={pricing.competitiveDiscount.threshold}
+            onChange={(e) => onPricing({
+              ...pricing,
+              competitiveDiscount: { ...pricing.competitiveDiscount, threshold: parseFloat(e.target.value) || 0 },
+            })}
+            disabled={!pricing.competitiveDiscount.enabled}
+            className="w-16 border border-gray-300 rounded px-2 py-1 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+          />
+        </div>
+      </div>
+
       {/* Overall net banner */}
       {cards.length > 0 && (
         <div className={`rounded-lg px-4 py-3 flex items-center justify-between text-sm border
@@ -449,7 +492,7 @@ export default function Step2Configure({ cards, pricing, ebay, onPricing, onEbay
               <Input value={ebay.conditionDescription} onChange={(e) => onEbay({ ...ebay, conditionDescription: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div><Label hint="2536 = Magic: The Gathering Cards">eBay Category ID</Label>
+              <div><Label hint="183454 = current MTG Individual Cards; 2536 was the old ID">eBay Category ID</Label>
                 <Input value={ebay.categoryId} onChange={(e) => onEbay({ ...ebay, categoryId: e.target.value })} /></div>
               <div><Label>Handling time (days)</Label>
                 <Input type="number" min="1" max="30" value={ebay.dispatchTimeMax}
@@ -458,6 +501,46 @@ export default function Step2Configure({ cards, pricing, ebay, onPricing, onEbay
                 <Input value={ebay.country} onChange={(e) => onEbay({ ...ebay, country: e.target.value })} /></div>
               <div><Label>Currency</Label>
                 <Input value={ebay.currency} onChange={(e) => onEbay({ ...ebay, currency: e.target.value })} /></div>
+            </div>
+
+            {/* Location + shipping (required by eBay) */}
+            <div className="grid grid-cols-2 gap-4">
+              <div><Label hint="City, State (required by eBay)">Item location</Label>
+                <Input placeholder="Brooklyn, NY"
+                  value={ebay.itemLocation}
+                  onChange={(e) => onEbay({ ...ebay, itemLocation: e.target.value })} /></div>
+              <div><Label>ZIP / Postal code</Label>
+                <Input placeholder="11201"
+                  value={ebay.postalCode}
+                  onChange={(e) => onEbay({ ...ebay, postalCode: e.target.value })} /></div>
+              <div><Label hint="USPSFirstClass, USPSGround, USPSPriority">Shipping service</Label>
+                <Input value={ebay.shippingService}
+                  onChange={(e) => onEbay({ ...ebay, shippingService: e.target.value })} /></div>
+              <div><Label hint="charged to buyer">Shipping cost ($)</Label>
+                <Input type="number" step="0.01" min="0"
+                  value={ebay.shippingCost}
+                  onChange={(e) => onEbay({ ...ebay, shippingCost: parseFloat(e.target.value) || 0 })} /></div>
+            </div>
+
+            {/* Returns */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label hint="required by eBay for most categories">Returns accepted</Label>
+                <Select value={ebay.returnsAccepted ? 'yes' : 'no'}
+                  onChange={(e) => onEbay({ ...ebay, returnsAccepted: e.target.value === 'yes' })}>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </Select>
+              </div>
+              <div>
+                <Label>Return window (days)</Label>
+                <Select value={String(ebay.returnPolicyDays)}
+                  onChange={(e) => onEbay({ ...ebay, returnPolicyDays: parseInt(e.target.value) || 30 })}>
+                  <option value="14">14 days</option>
+                  <option value="30">30 days</option>
+                  <option value="60">60 days</option>
+                </Select>
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-4">
               <div><Label>Payment profile</Label>

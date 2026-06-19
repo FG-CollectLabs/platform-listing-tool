@@ -762,8 +762,12 @@ export default function Step3Images({ cards, onCards, onBack, onNext }: Props) {
     const updated = cards.map(card => {
       const frontImg = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'front')
       const backImg  = images.find(i => i.assignedTo === card.tcgplayerId && i.side === 'back')
+      // Promote the resolved Scryfall URL into photoUrl so the eBay CSV
+      // uses it as the 3rd photo (after scans).
+      const stockUrl = catalogStore.get(card.setName)?.images.get(card.number) || card.photoUrl
       return {
         ...card,
+        photoUrl: stockUrl,
         imageObjectUrl:     frontImg?.objectUrl,
         imageFileName:      frontImg?.hostedUrl ?? frontImg?.fileName,
         imageObjectUrlBack: backImg?.objectUrl,
