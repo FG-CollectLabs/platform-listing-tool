@@ -18,13 +18,10 @@ export interface CardOcrResult {
 // MTG card regions (relative fractions of card dimensions)
 // Name bar: skip top bleed, crop before mana cost on the right.
 const NAME_REGION    = { x: 0.06, y: 0.06, w: 0.72, h: 0.09 }
-// Bottom info splits into TWO lines on modern MTG cards:
-//   Line 1: "R 0045"            — rarity letter + collector number
-//   Line 2: "TMC · EN ★ ARTIST" — set code + language + artist
-// Crop them separately so we can parse "first letter / digits / first 3 chars"
-// without the lines bleeding into each other or copyright noise on the right.
-const LINE_1_REGION  = { x: 0.04, y: 0.873, w: 0.46, h: 0.030 }
-const LINE_2_REGION  = { x: 0.04, y: 0.903, w: 0.46, h: 0.030 }
+// Bottom info area: includes BOTH lines (rarity+number, set+lang+artist).
+// Cropped to the left half so the copyright stack on the right side
+// doesn't leak into OCR. We split Tesseract's output by newlines after.
+const BOTTOM_REGION  = { x: 0.04, y: 0.875, w: 0.50, h: 0.070 }
 
 let _worker: Worker | null = null
 
@@ -118,38 +115,40 @@ export async function analyzeCard(objectUrl: string): Promise<CardOcrResult> {
   if (!_worker) await initOcrWorker()
   const worker = _worker!
 
-  const [nameData, line1Data, line2Data] = await Promise.all([
+  const [nameData, bottomData] = await Promise.all([
     cropRegion(objectUrl, NAME_REGION),
-    cropRegion(objectUrl, LINE_1_REGION),
-    cropRegion(objectUrl, LINE_2_REGION),
+    cropRegion(objectUrl, BOTTOM_REGION),
   ])
 
-  const [nameResult, line1Result, line2Result] = await Promise.all([
+  const [nameResult, bottomResult] = await Promise.all([
     worker.recognize(nameData.canvas),
-    worker.recognize(line1Data.canvas),
-    worker.recognize(line2Data.canvas),
+    worker.recognize(bottomData.canvas),
   ])
 
-  const rawName  = nameResult.data.text.trim()
-  const rawLine1 = line1Result.data.text.trim()
-  const rawLine2 = line2Result.data.text.trim()
-  const nameConf = nameResult.data.confidence / 100
-  const l1Conf   = line1Result.data.confidence / 100
-  const l2Conf   = line2Result.data.confidence / 100
+  const rawName   = nameResult.data.text.trim()
+  const rawBottom = bottomResult.data.text.trim()
+  const nameConf  = nameResult.data.confidence / 100
+  const botConf   = bottomResult.data.confidence / 100
 
-  const parsedName    = cleanName(rawName)
-  const { rarity: parsedRarity, number: parsedNumber } = parseLine1(rawLine1)
-  const parsedSetCode = parseSetCode(rawLine2)
+  const parsedName = cleanName(rawName)
+
+  // Tesseract preserves newlines in its output — split into lines.
+  // Line 1 is the rarity+number row, line 2 is the set+lang+artist row.
+  const lines = rawBottom.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+  const rawLine1 = lines[0] || ''
+  const rawLine2 = lines[1] || ''
+
+  // If splitting failed (e.g. lines merged into one), fall back to whole text
+  const { rarity: parsedRarity, number: parsedNumber } = parseLine1(rawLine1 || rawBottom)
+  const parsedSetCode = parseSetCode(rawLine2 || rawBottom)
 
   return {
-    nameRegion:   { dataUrl: nameData.dataUrl,  rawText: rawName },
-    // bottomRegion shows line 1 by default for the verify modal; raw text
-    // includes both lines so users can see what each row read.
-    bottomRegion: { dataUrl: line1Data.dataUrl, rawText: `${rawLine1}\n${rawLine2}` },
+    nameRegion:   { dataUrl: nameData.dataUrl,   rawText: rawName },
+    bottomRegion: { dataUrl: bottomData.dataUrl, rawText: rawBottom },
     parsedName,
     parsedNumber,
     parsedRarity,
     parsedSetCode,
-    confidence: (nameConf + l1Conf + l2Conf) / 3,
+    confidence: (nameConf + botConf) / 2,
   }
 }

@@ -1,4 +1,4 @@
-export const VERSION = '1.9.0'
+export const VERSION = '1.9.1'
 
 export interface Release {
   version: string
@@ -7,6 +7,13 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '1.9.1',
+    date: '2026-06-19',
+    notes: [
+      'Step 3 OCR: bottom region back to one larger crop (was missing text in the narrow two-crop split). Tesseract\'s output is now split by newlines — line 1 → rarity+number, line 2 → set code',
+    ],
+  },
   {
     version: '1.9.0',
     date: '2026-06-19',
