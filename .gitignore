@@ -4,3 +4,6 @@ uploads/
 .env.local
 .env.*.local
 *.log
+# R2 credentials (kept at ~/.config/fg-collectlabs/r2.env on dev,
+# /opt/platform-listing-tool/r2.env on prod)
+r2.env

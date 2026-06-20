@@ -6,6 +6,7 @@ services:
       - "8082:8080"          # change host port if 8082 is taken
     environment:
       - PORT=8080
-      - BASE_URL=https://platform-listings.futuregadgetlabs.com   # your Cloudflare Tunnel domain
-    volumes:
-      - ./uploads:/app/uploads   # persist uploaded images on the host
+    # R2 credentials (account id, access key, secret, endpoint, bucket, public base).
+    # On the prod LXC this lives at /opt/platform-listing-tool/r2.env
+    env_file:
+      - ./r2.env

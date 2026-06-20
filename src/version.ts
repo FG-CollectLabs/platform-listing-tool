@@ -1,4 +1,4 @@
-export const VERSION = '1.10.1'
+export const VERSION = '2.0.0'
 
 export interface Release {
   version: string
@@ -7,6 +7,16 @@ export interface Release {
 }
 
 export const CHANGELOG: Release[] = [
+  {
+    version: '2.0.0',
+    date: '2026-06-20',
+    notes: [
+      'Image hosting migrated from homelab Docker volume to Cloudflare R2 (https://images.futuregadgetlabs.com). Fixes the silent 524-timeout failure that was losing images on a percentage of new listings',
+      'Uploads now stored at YYYY-MM/{uuid}.{ext} so old months can be retired without touching newer listings',
+      'Image Library redesigned: month-folder navigation with per-month archive workflow — Archive moves a month to TODELETE/, Restore puts it back, Purge permanently deletes',
+      'New backend endpoints: GET /api/months, POST /api/months/archive, POST /api/months/restore, DELETE /api/months/purge, GET /api/image, DELETE /api/image',
+    ],
+  },
   {
     version: '1.10.1',
     date: '2026-06-19',

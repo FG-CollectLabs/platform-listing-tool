@@ -6,10 +6,10 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Stage 2: build Go backend
-FROM golang:1.22-alpine AS backend
+# Stage 2: build Go backend (R2-backed, uses AWS SDK Go v2)
+FROM golang:1.24-alpine AS backend
 WORKDIR /app/server
-COPY server/go.mod ./
+COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/main.go ./
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /platform-listing-server .
@@ -20,10 +20,10 @@ RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=backend /platform-listing-server .
 COPY --from=frontend /app/dist ./dist
-RUN mkdir -p uploads
 
 ENV PORT=8080
-ENV BASE_URL=""
+# R2 credentials provided via docker-compose env_file
+# R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT, R2_BUCKET, R2_PUBLIC_BASE
 EXPOSE 8080
 
 CMD ["/app/platform-listing-server"]
